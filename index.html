@@ -164,6 +164,15 @@
   .slider-row{display:grid;grid-template-columns: 130px 1fr 78px;gap:6px;
     align-items:center;margin-bottom:4px}
   .slider-row label{font-size:11px;color:var(--muted);cursor:pointer;user-select:none}
+  /* Slider row controlled by an active dependency: greyed out + slider disabled */
+  .slider-row.dep-locked{opacity:0.45}
+  .slider-row.dep-locked input[type="range"]{pointer-events:none}
+  .slider-row.dep-locked label{cursor:default;text-decoration:none}
+  /* Labels are only clickable as x-axis in SNR view */
+  body[data-view="img"] .slider-row label,
+  body[data-view="ifs"] .slider-row label{cursor:default}
+  body[data-view="img"] .slider-row label:hover,
+  body[data-view="ifs"] .slider-row label:hover{color:var(--muted);text-decoration:none}
   .slider-row label:hover{color:var(--accent);text-decoration:underline}
   .slider-row label.is-x{color:var(--accent-2);font-weight:600}
   .slider-row input[type="range"]{width:100%;accent-color:var(--accent);
@@ -211,6 +220,14 @@
   /* Canvas fills the cell, stretched in pixel-art mode — image aspect is not preserved (it's 500×100, very thin) */
   .img-cell canvas{width:100%;height:100%;display:block;image-rendering:pixelated;position:relative;z-index:1;cursor:crosshair}
   .img-cell svg.overlay{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
+  /* Thin colorbar on the right of the IFS imshow cells. width: 14px from the right border. */
+  .img-cell-with-cb canvas.ifs-colorbar{position:absolute;top:18px;right:4px;width:12px;height:calc(100% - 36px);
+    image-rendering:pixelated;z-index:4;border:1px solid rgba(255,255,255,0.25);border-radius:1px;cursor:pointer}
+  .img-cell-with-cb .cb-label{position:absolute;right:18px;font-size:9px;color:#fff;
+    background:rgba(0,0,0,0.5);padding:1px 3px;border-radius:2px;z-index:5;
+    font-family:var(--font-mono);pointer-events:none}
+  .img-cell-with-cb .cb-top{top:18px}
+  .img-cell-with-cb .cb-bottom{bottom:18px}
   /* 2×2 grid of analysis sub-plots */
   .img-extra{height:45%;min-height:0;flex:none;display:grid;
     grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px;overflow:hidden}
@@ -293,15 +310,21 @@
       </div>
       <div id="plot-ifs" class="img-view">
         <div class="img-row-h">
-          <div class="img-cell">
+          <div class="img-cell img-cell-with-cb">
             <div class="cell-title" id="ifs-single-title">Single cube — λ slice</div>
             <canvas id="cv-ifs-single" title="Single-exposure λ-slice of the IFS cube. Cube[H × n3 × W] is built as a separable product: 2D spatial PSF × source spectrum. DS9 colormap drag works here too."></canvas>
             <svg id="ov-ifs-single" class="overlay" preserveAspectRatio="none"></svg>
+            <canvas id="cb-ifs-single" class="ifs-colorbar"></canvas>
+            <div class="cb-label cb-top" id="cb-ifs-single-max"></div>
+            <div class="cb-label cb-bottom" id="cb-ifs-single-min"></div>
           </div>
-          <div class="img-cell">
+          <div class="img-cell img-cell-with-cb">
             <div class="cell-title" id="ifs-stack-title">Stacked cube — λ slice</div>
             <canvas id="cv-ifs-stack" title="Stacked-exposure λ-slice. Drag the dashed rectangle to choose the extraction region. The integrated spectrum below shows the average flux vs λ over that region."></canvas>
             <svg id="ov-ifs-stack" class="overlay" preserveAspectRatio="none"></svg>
+            <canvas id="cb-ifs-stack" class="ifs-colorbar"></canvas>
+            <div class="cb-label cb-top" id="cb-ifs-stack-max"></div>
+            <div class="cb-label cb-bottom" id="cb-ifs-stack-min"></div>
           </div>
         </div>
         <div class="img-extra" style="grid-template-columns:1fr;grid-template-rows:1fr">
@@ -1166,13 +1189,16 @@ function buildUI(){
     for (const [k,p] of Object.entries(PARAMS)){
       if (p.tab!==group) continue;
       const row = body.append("div").attr("class","slider-row");
-      const tipText = `${k}${p.unit?` [${p.unit}]`:""}${p.tip?`\n\n${p.tip}`:""}`;
-      const lab = row.append("label").attr("title", tipText + (p.xable?"\n\nClick to use as x-axis.":"\n\n(not selectable as x-axis)"))
+      // Tooltip = explanation only (no parameter name, no "click to use as x-axis" hint)
+      const tipText = p.tip || (p.label + (p.unit?` [${p.unit}]`:""));
+      const lab = row.append("label").attr("title", tipText)
         .attr("data-label-key", k)
         .classed("is-x", STATE.xKey===k)
         .text(p.label + (p.unit?` [${p.unit}]`:""));
       if (p.xable){
         lab.on("click", function(){
+          // Click to set x-axis is meaningful only on the SNR view (where the x-axis is plotted)
+          if (STATE.view !== "snr") return;
           STATE.xKey = k;
           const sel = document.getElementById("xaxis");
           sel.value = k;
@@ -1322,7 +1348,9 @@ function updateDepVisibility(){
     const inp = document.querySelector(`input[data-key="${d.key}"]`);
     if (!inp) return;
     const row = inp.closest(".slider-row");
-    if (row) row.style.display = active ? "none" : "";
+    // Keep the row visible; just disable the slider and grey out the row to signal the dep is driving it.
+    if (row) row.classList.toggle("dep-locked", active);
+    inp.disabled = active;
   });
 }
 /* Apply active dependencies to a scalar param map (mutates in place) */
@@ -1624,11 +1652,21 @@ function makeAxis(axisFn, scale, nMax, withLabels){
     const [a,b] = scale.domain();
     const la = Math.floor(Math.log10(Math.max(a, 1e-30)));
     const lb = Math.ceil(Math.log10(Math.max(b, 10*a)));
-    const decades = [];
-    for (let k=la; k<=lb; k++) decades.push(Math.pow(10,k));
-    // Down-sample if too many
-    let step = Math.max(1, Math.ceil(decades.length / nMax));
-    const kept = decades.filter((_,i)=> i%step === 0);
+    // Build powers of 10 + the 2/3/5 sub-decade values
+    const subs = [1, 2, 3, 5];
+    const vals = [];
+    for (let k=la; k<=lb; k++){
+      const base = Math.pow(10, k);
+      for (const s of subs) vals.push(s*base);
+    }
+    // Keep only values inside [a, b]
+    let kept = vals.filter(v => v >= a*0.999 && v <= b*1.001);
+    // Down-sample if too many (target ~3·nMax labels max so it stays readable)
+    const target = Math.max(4, nMax*3);
+    if (kept.length > target){
+      const step = Math.ceil(kept.length / target);
+      kept = kept.filter((_,i)=> i%step === 0);
+    }
     return axisFn(scale).tickValues(kept).tickFormat(withLabels ? fmt : "").tickSizeOuter(0);
   } else {
     return axisFn(scale).ticks(nMax).tickFormat(withLabels ? fmt : "").tickSizeOuter(0);
@@ -1881,6 +1919,59 @@ function applyColorScale(which){
   const vmin = center - spread;
   const vmax = center + spread;
   rasterizeImage(cv, data, c.W, c.H, vmin, vmax, c.ylog);
+  // Render the IFS colorbar with the same vmin/vmax and the current colormap
+  if (isIfs){
+    const cbId = which === "ifs_single" ? "cb-ifs-single" : "cb-ifs-stack";
+    const cb = document.getElementById(cbId);
+    if (cb){
+      renderColorbar(cb, vmin, vmax, c.ylog);
+      const minEl = document.getElementById(cbId+"-min");
+      const maxEl = document.getElementById(cbId+"-max");
+      if (minEl) minEl.textContent = formatCbVal(vmin);
+      if (maxEl) maxEl.textContent = formatCbVal(vmax);
+    }
+  }
+}
+
+function formatCbVal(v){
+  if (!isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a===0) return "0";
+  if (a<1e-2 || a>=1e4) return v.toExponential(1);
+  return v.toFixed(2);
+}
+
+/* Render a vertical colorbar (low at the bottom, high at the top) using the
+   current colormap (STATE.colormap) and the same vmin/vmax+log mapping as the imshow. */
+function renderColorbar(cb, vmin, vmax, useLog){
+  // Use a fixed internal resolution and let CSS resize. 1px wide × N px tall.
+  const W = 8, H = 200;
+  cb.width = W; cb.height = H;
+  const ctx = cb.getContext("2d");
+  const img = ctx.createImageData(W, H);
+  let tFn;
+  if (useLog){
+    const offset = Math.max(1, -vmin + 1);
+    const lmin = Math.log10(vmin + offset);
+    const lmax = Math.log10(vmax + offset);
+    const range = (lmax - lmin) || 1;
+    tFn = v => (Math.log10(v + offset) - lmin) / range;
+  } else {
+    const range = (vmax - vmin) || 1;
+    tFn = v => (v - vmin)/range;
+  }
+  for (let j=0; j<H; j++){
+    // Row j=0 is at the TOP (high values), j=H-1 is at the BOTTOM (low values)
+    const tDisp = 1 - j/(H-1);                // 1 at top, 0 at bottom
+    const vAtRow = vmin + tDisp * (vmax - vmin);
+    const t = tFn(vAtRow);
+    const [r,g,b] = cmapAt(STATE.colormap || "viridis", t);
+    for (let i=0; i<W; i++){
+      const k = (j*W + i)*4;
+      img.data[k]=r; img.data[k+1]=g; img.data[k+2]=b; img.data[k+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
 }
 
 function attachImageColorscaleDrag(){
@@ -2527,10 +2618,23 @@ function drawIfsSpectrum(){
   svg.append("text").attr("x", W-m.r-4).attr("y", H-m.b-4).attr("text-anchor","end")
     .style("font-size","10px").style("fill","var(--plot-axis-text,#444)").style("font-style","italic").text("λ [Å]");
 
-  // ----- Draggable vertical λ cursor -----
+  // ----- Draggable vertical λ cursor + lambda_stack band -----
   const lc = IFS_STATE.lambda_center;
   if (lc != null){
     const xPos = xs(lc);
+    // Translucent band of half-width = lambda_stack/2 spectral pixels (= lambda_stack/2 × dispersion Å).
+    // This visualises the spectral window over which the cube is integrated to form the imshow slice.
+    const lstkPix = Math.max(1, Math.round(STATE.values.lambda_stack || 1));
+    const dispA   = STATE.values.dispersion || 1;
+    const halfWidA = (lstkPix/2) * dispA;
+    const xLo = xs(Math.max(IFS_STATE.wavelengths[0],                 lc - halfWidA));
+    const xHi = xs(Math.min(IFS_STATE.wavelengths[IFS_STATE.W-1],     lc + halfWidA));
+    if (xHi - xLo > 1){
+      svg.append("rect").attr("class","ifs-lambda-band")
+        .attr("x", xLo).attr("y", m.t).attr("width", xHi-xLo).attr("height", H-m.b-m.t)
+        .attr("fill", "#E24A33").attr("fill-opacity", 0.18)
+        .style("pointer-events","none");
+    }
     // Main vertical line
     svg.append("line").attr("class","ifs-lambda-line")
       .attr("x1", xPos).attr("x2", xPos).attr("y1", m.t).attr("y2", H-m.b)
@@ -2700,6 +2804,8 @@ function scheduleUpdate(){ if (updateScheduled) return; updateScheduled = true; 
 
 function setView(view){
   STATE.view = view;
+  // Reflect on <body> so CSS can adapt (e.g. disable click cursor on labels outside the SNR view)
+  document.body.setAttribute("data-view", view);
   document.querySelectorAll(".view-tab").forEach(el => el.classList.toggle("active", el.dataset.view===view));
   document.getElementById("plot").classList.toggle("active", view==="snr");
   document.getElementById("plot-img").classList.toggle("active", view==="img");
@@ -2836,6 +2942,7 @@ function initTheme(){
 initTheme();
 
 async function main(){
+  document.body.setAttribute("data-view", STATE.view || "snr");
   initValuesToDefault();
   await loadSpectraData();
   buildUI();
