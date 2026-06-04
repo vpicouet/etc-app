@@ -937,10 +937,12 @@ const ACTIVE_DEPS = new Set(); // currently selected dep keys
 const STATE = {
   instruments:null, current_instrument:null, values:{}, xKey:"exposure_time", view:"snr",
   imgSeed:1,
-  // DS9-style colormap controls per canvas (single + stack independent)
+  // DS9-style colormap controls per canvas (single + stack independent for both Spectro and IFS views)
   imgCM: {
-    single: { bias: 0, contrast: 1 },
-    stack:  { bias: 0, contrast: 1 }
+    single:     { bias: 0, contrast: 1 },
+    stack:      { bias: 0, contrast: 1 },
+    ifs_single: { bias: 0, contrast: 1 },
+    ifs_stack:  { bias: 0, contrast: 1 }
   }
 };
 
@@ -1605,13 +1607,23 @@ function drawImageView(){
 /* Apply current bias/contrast to one canvas and re-rasterise.
    bias  ∈ (-1, +1) shifts the center of the displayed range (negative → favours dark, positive → favours bright).
    contrast > 0     scales the spread (1 = identity, >1 = high contrast/narrow range, <1 = low contrast/wide range).
-   The formulas follow DS9's standard mapping: center += bias × half_range; spread /= contrast. */
+   The formulas follow DS9's standard mapping: center += bias × half_range; spread /= contrast.
+   `which` must match a key in STATE.imgCM. Mapping: spectro → STATE.imgCache, ifs → STATE.imgCacheIfs. */
 function applyColorScale(which){
-  const c = STATE.imgCache; if (!c) return;
-  const cv = document.getElementById(which==="single" ? "cv-single" : "cv-stack");
-  const data = c[which];
+  const isIfs = which.startsWith("ifs_");
+  const c = isIfs ? STATE.imgCacheIfs : STATE.imgCache;
+  if (!c) return;
+  const cvId = {
+    single:     "cv-single",
+    stack:      "cv-stack",
+    ifs_single: "cv-ifs-single",
+    ifs_stack:  "cv-ifs-stack"
+  }[which];
+  const dataKey = isIfs ? (which === "ifs_single" ? "single" : "stack") : which;
+  const cv = document.getElementById(cvId);
+  const data = c[dataKey];
   const cm = STATE.imgCM[which];
-  const v0 = c.vmin0[which], v1 = c.vmax0[which];
+  const v0 = c.vmin0[dataKey], v1 = c.vmax0[dataKey];
   const half = (v1 - v0) / 2;
   const center0 = (v0 + v1) / 2;
   const center = center0 + cm.bias * half;
@@ -1624,8 +1636,15 @@ function applyColorScale(which){
 function attachImageColorscaleDrag(){
   if (STATE._dragAttached) return;
   STATE._dragAttached = true;
-  ["single","stack"].forEach(which=>{
-    const cv = document.getElementById(which==="single" ? "cv-single" : "cv-stack");
+  const targets = [
+    { which:"single",     cvId:"cv-single" },
+    { which:"stack",      cvId:"cv-stack" },
+    { which:"ifs_single", cvId:"cv-ifs-single" },
+    { which:"ifs_stack",  cvId:"cv-ifs-stack" }
+  ];
+  targets.forEach(({which, cvId})=>{
+    const cv = document.getElementById(cvId);
+    if (!cv) return;
     // Disable the browser context menu so right-click drag works
     cv.addEventListener("contextmenu", e => e.preventDefault());
     let dragging = false, sx0=0, sy0=0, bias0=0, contrast0=1;
@@ -1961,13 +1980,13 @@ function buildIfsCubeFromModel(sim, pa, n3, seed, stack){
   // Spectral profile (normalised so Σ = 1)
   const spec = sim.spectralProfile;
 
-  // 2D spatial PSF: sigma_y in detector pixels (along the slit, axis H), sigma_x in spaxels (axis n3)
-  // For the long axis (H): use the existing spatialProfile sigma derived from PSF_RMS_det × FWHM_factor.
-  // For the spaxel axis (n3): the slicer width is Slitwidth, so 1 spaxel = Slitwidth arcsec.
-  // sigma_spaxel = (PSF_RMS_mask × 2.35) / Slitwidth   spaxels  (FWHM in arcsec divided by spaxel size)
-  const fwhm_factor = 2.35;
-  const sigma_y_px = (pa.PSF_RMS_det * fwhm_factor) / pa.pixel_scale;   // detector pixels (axis H)
-  const sigma_x_spx = Math.max(0.5, (pa.PSF_RMS_mask * fwhm_factor) / Math.max(0.001, pa.Slitwidth));
+  // 2D spatial PSF — formulas mirror Observation.py SimulateFIREBallemCCDImage:
+  //   sigma_y_px = sqrt(min(Size_source, Slitlength)^2 + PSF_RMS_det^2) / pixel_scale   (detector pixels, along slit)
+  //   sigma_x_spx = sqrt(Size_source^2 + PSF_RMS_mask^2) / Slitwidth                    (spaxels, slicer axis)
+  // Both Size_source and PSF_RMS_* are arcsec sigmas (no 2.35 factor here).
+  const Size_eff_y = Math.min(pa.Size_source, pa.Slitlength);   // source can't extend beyond the slit length on Y
+  const sigma_y_px  = Math.max(0.3, Math.sqrt(Size_eff_y*Size_eff_y + pa.PSF_RMS_det*pa.PSF_RMS_det) / pa.pixel_scale);
+  const sigma_x_spx = Math.max(0.3, Math.sqrt(pa.Size_source*pa.Size_source + pa.PSF_RMS_mask*pa.PSF_RMS_mask) / Math.max(0.001, pa.Slitwidth));
   const cy = H/2, cx = n3/2;
 
   // Precompute 2D spatial PSF, normalised so Σ_jk psf2D = 1
@@ -2108,13 +2127,19 @@ function drawIfsView(){
     IFS_STATE.rect = { x1: n3/2 - rw/2, x2: n3/2 + rw/2, y1: sim.H/2 - rh/2, y2: sim.H/2 + rh/2 };
   }
 
-  // Render slices on canvases
-  const cvS = document.getElementById("cv-ifs-single");
-  const cvK = document.getElementById("cv-ifs-stack");
+  // Render slices on canvases via the bias/contrast aware path (so DS9 drag works on IFS too)
   const vminS = percentile(sliceSingle, 0.01), vmaxS = percentile(sliceSingle, 0.99);
   const vminK = percentile(sliceStack,  0.01), vmaxK = percentile(sliceStack,  0.99);
-  rasterizeImage(cvS, sliceSingle, n3, sim.H, vminS, vmaxS, false);
-  rasterizeImage(cvK, sliceStack,  n3, sim.H, vminK, vmaxK, false);
+  STATE.imgCacheIfs = {
+    single: sliceSingle, stack: sliceStack,
+    W: n3, H: sim.H,
+    vmin0: { single: vminS, stack: vminK },
+    vmax0: { single: vmaxS, stack: vmaxK },
+    ylog: false
+  };
+  applyColorScale("ifs_single");
+  applyColorScale("ifs_stack");
+  attachImageColorscaleDrag();
 
   // Titles
   document.getElementById("ifs-single-title").textContent =
