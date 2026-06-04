@@ -1094,6 +1094,8 @@ const ACTIVE_DEPS = new Set(); // currently selected dep keys
 const STATE = {
   instruments:null, current_instrument:null, values:{}, xKey:"exposure_time", view:"snr",
   imgSeed:1,
+  // Active colormap (applies to all imshow canvases — Spectro single+stack, IFS single+stack).
+  colormap: (function(){ try { return localStorage.getItem("etc.cmap") || "viridis"; } catch(e){ return "viridis"; } })(),
   // DS9-style colormap controls per canvas (single + stack independent for both Spectro and IFS views)
   imgCM: {
     single:     { bias: 0, contrast: 1 },
@@ -1265,6 +1267,37 @@ function buildImageOptionsUI(){
     "Apply the selected atmospheric transmission curve along the spectral axis.");
   tog("img-skylines", "Sky emission lines", "sky_lines",
     "Inject sky emission lines (from the selected catalogue) on top of the continuum sky.");
+
+  // ----- Colormap picker -----
+  const cmapLabel = wrap.append("div").style("display","flex").style("align-items","center").style("gap","6px")
+    .style("margin-top","6px").style("font-size","11.5px").style("color","var(--muted)");
+  cmapLabel.append("span").text("Colormap:");
+  const cmapBar = cmapLabel.append("div").attr("id","cmap-picker").style("display","flex").style("gap","2px").style("flex","1");
+  COLORMAP_NAMES.forEach(name => {
+    const sw = cmapBar.append("div").attr("data-cmap", name)
+      .style("flex","1").style("height","14px").style("cursor","pointer")
+      .style("border-radius","2px").style("position","relative")
+      .style("outline", name===STATE.colormap ? "2px solid var(--accent)" : "1px solid var(--line)")
+      .attr("title", name);
+    // Build a small inline gradient via CSS linear-gradient using ~6 stops
+    const stops = [];
+    const n = 6;
+    for (let k=0; k<=n; k++){
+      const [r,g,b] = cmapAt(name, k/n);
+      stops.push(`rgb(${r|0},${g|0},${b|0}) ${(100*k/n).toFixed(0)}%`);
+    }
+    sw.style("background", `linear-gradient(to right, ${stops.join(",")})`);
+    sw.on("click", function(){
+      STATE.colormap = name;
+      try { localStorage.setItem("etc.cmap", name); } catch(e){}
+      // Update outlines
+      document.querySelectorAll("#cmap-picker > [data-cmap]").forEach(el =>
+        el.style.outline = (el.dataset.cmap === name) ? "2px solid var(--accent)" : "1px solid var(--line)");
+      // Re-rasterise all canvases via the bias/contrast pipeline (no need to re-sim)
+      if (STATE.imgCache){ applyColorScale("single"); applyColorScale("stack"); }
+      if (STATE.imgCacheIfs){ applyColorScale("ifs_single"); applyColorScale("ifs_stack"); }
+    });
+  });
 }
 
 /* Build dependencies UI + show/hide slider rows when a dep becomes active */
@@ -1425,11 +1458,10 @@ function drawPlot(res){
     ]);
   });
 
-  // x-axis label — placed top-right of the last panel (just inside its top edge) to avoid colliding
-  // with the panel's own tick labels at the bottom.
+  // x-axis label — bottom-right of the last panel, just above the x-axis line
   const lastP = panels[panels.length-1];
-  svg.append("text").attr("x", lastP.x + lastP.w - 8).attr("y", lastP.y + 12)
-    .attr("text-anchor","end").attr("class","ax-title").text(`x: ${xKey}`);
+  svg.append("text").attr("x", lastP.x + lastP.w - 8).attr("y", lastP.y + lastP.h - 6)
+    .attr("text-anchor","end").attr("class","ax-title").style("font-style","italic").text(`x: ${xKey}`);
 
   // Visible vertical line at the current value (the draggable hit zone is appended
   // AFTER the hover-tooltip rect below so it sits on top in z-order and actually catches mousedown).
@@ -1677,21 +1709,50 @@ function legendBlock(g, panel, items){
    IMAGE VIEW RENDERING
    ========================================================================== */
 // Color map (viridis-like, hardcoded LUT for speed)
-const VIRIDIS = [
-  [68,1,84],[71,24,106],[71,44,123],[68,62,135],[64,79,140],
-  [58,93,142],[51,107,143],[46,121,142],[40,135,141],[35,148,138],
-  [33,162,132],[44,176,121],[68,189,107],[101,201,87],[140,210,66],
-  [183,217,42],[222,224,27],[253,231,37]
-];
-function viridisAt(t){ // t in [0,1]
+// === Color maps ============================================================
+// Each LUT is a small array of [R,G,B] (0..255) that we linearly interpolate.
+const COLORMAPS = {
+  viridis: [
+    [68,1,84],[71,24,106],[71,44,123],[68,62,135],[64,79,140],
+    [58,93,142],[51,107,143],[46,121,142],[40,135,141],[35,148,138],
+    [33,162,132],[44,176,121],[68,189,107],[101,201,87],[140,210,66],
+    [183,217,42],[222,224,27],[253,231,37]
+  ],
+  inferno: [
+    [0,0,4],[20,11,52],[51,4,82],[81,8,99],[110,17,103],
+    [138,28,99],[167,40,90],[193,55,76],[216,73,57],[233,97,40],
+    [245,124,21],[252,153,11],[253,184,18],[247,215,44],[236,247,80]
+  ],
+  plasma: [
+    [13,8,135],[55,4,159],[91,1,168],[123,3,167],[152,18,158],
+    [177,38,143],[200,60,124],[219,84,107],[235,107,89],[247,131,73],
+    [253,156,57],[253,182,46],[247,209,49],[239,237,80]
+  ],
+  cividis: [
+    [0,32,77],[0,42,100],[0,52,114],[31,62,118],[55,72,119],
+    [73,82,120],[88,93,120],[103,103,120],[118,114,119],[134,124,116],
+    [152,135,112],[170,146,108],[190,157,101],[210,169,93],[233,182,80],[253,196,65]
+  ],
+  gray: [[0,0,0],[255,255,255]],
+  hot: [
+    [0,0,0],[58,0,0],[110,0,0],[160,0,0],[210,0,0],[255,30,0],
+    [255,82,0],[255,135,0],[255,188,0],[255,230,30],[255,255,140],[255,255,255]
+  ]
+};
+const COLORMAP_NAMES = ["viridis","inferno","plasma","cividis","gray","hot"];
+
+function cmapAt(name, t){
   if (!isFinite(t)) return [0,0,0];
+  const lut = COLORMAPS[name] || COLORMAPS.viridis;
   t = Math.max(0,Math.min(1,t));
-  const x = t*(VIRIDIS.length-1);
-  const i0 = Math.floor(x), i1 = Math.min(VIRIDIS.length-1, i0+1);
+  const x = t*(lut.length-1);
+  const i0 = Math.floor(x), i1 = Math.min(lut.length-1, i0+1);
   const f = x-i0;
-  const a = VIRIDIS[i0], b = VIRIDIS[i1];
+  const a = lut[i0], b = lut[i1];
   return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
 }
+// Backwards-compat alias
+function viridisAt(t){ return cmapAt(STATE.colormap || "viridis", t); }
 
 function rasterizeImage(canvas, data, W, H, vmin, vmax, useLog){
   // data[j*W+i] in row-major (j = spatial / row, i = spectral / col)
@@ -2058,7 +2119,9 @@ function drawCurveSvg(svgId, single, stack, xValues, title, xLabel){
   svg.append("path").datum(Array.from(stack)).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",3.2).attr("d", line);
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title").text(title);
   // x-label moved to top-right (just above the panel) so it doesn't collide with tick labels
-  svg.append("text").attr("x", W-m.r-4).attr("y", m.t-2).attr("text-anchor","end").style("font-size","10px").style("fill","var(--plot-axis-text,#444)").text(xLabel);
+  // x-label sits just ABOVE the axis on the right (between curves and the axis line)
+  svg.append("text").attr("x", W-m.r-4).attr("y", H-m.b-4).attr("text-anchor","end")
+    .style("font-size","10px").style("fill","var(--plot-axis-text,#444)").style("font-style","italic").text(xLabel);
 }
 
 function drawProfiles(sim){
@@ -2113,9 +2176,12 @@ function drawOptics(sim, pa){
     }
   }
 
-  // Title + legend
+  // Title at top
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title")
-    .text(`λ (Å) → Throughput / Atm / Sky / Source`);
+    .text(`Throughput / Atm / Sky / Source`);
+  // x-label just above the x-axis on the right
+  svg.append("text").attr("x", W-m.r-4).attr("y", H-m.b-4).attr("text-anchor","end")
+    .style("font-size","10px").style("fill","var(--plot-axis-text,#444)").style("font-style","italic").text("λ [Å]");
   const items = [
     {n:"Throughput", c:"#348ABD"},
     {n:"Atm trans",  c:"#E24A33"},
@@ -2154,19 +2220,32 @@ function drawHistogram(sim){
   const hK = buildHist(sim.stack,  vmin, vmax);
   const yMax = Math.max(d3.max(hS), d3.max(hK)) || 1;
 
+  const ylog = document.getElementById("ylog").checked;
   const xs = d3.scaleLinear().domain([vmin, vmax]).range([m.l, W-m.r]);
-  const ys = d3.scaleLinear().domain([0, yMax]).range([H-m.b, m.t]);
-
+  // Log y when ylog is on (bin counts >=0, so clamp lower bound to 1).
+  let ys, yBaselinePx;
+  if (ylog && yMax > 1){
+    ys = d3.scaleLog().domain([1, yMax]).range([H-m.b, m.t]);
+    yBaselinePx = H - m.b;   // bottom of axis = y=1
+  } else {
+    ys = d3.scaleLinear().domain([0, yMax]).range([H-m.b, m.t]);
+    yBaselinePx = ys(0);
+  }
+  const yFmt = d3.format(".1~e");  // scientific 1 significant digit (e.g. "5e+4")
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(5));
-  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3));
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`)
+    .call(d3.axisLeft(ys).ticks(3).tickFormat(yFmt));
 
   function plotBars(h, color, opacity){
     const bw = (W-m.l-m.r)/nBins;
     for (let i=0;i<nBins;i++){
+      // For ylog: ignore zero bins (scaleLog(0) is -Infinity)
+      if (ylog && yMax>1 && h[i] < 1) continue;
+      const yTop = ys(h[i] || (ylog ? 1 : 0));
       svg.append("rect")
-        .attr("x", m.l + i*bw).attr("y", ys(h[i]))
+        .attr("x", m.l + i*bw).attr("y", yTop)
         .attr("width", Math.max(1, bw-0.5))
-        .attr("height", (H-m.b) - ys(h[i]))
+        .attr("height", Math.max(0, yBaselinePx - yTop))
         .attr("fill", color).attr("fill-opacity", opacity);
     }
   }
@@ -2174,7 +2253,8 @@ function drawHistogram(sim){
   plotBars(hK, cssVar("--plot-curve","#000"), 0.7);
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title").text("Pixel value histogram (single grey, stack curve)");
   // x-label top-right above the panel (not below — overlaps tick labels)
-  svg.append("text").attr("x", W-m.r-4).attr("y", m.t-2).attr("text-anchor","end").style("font-size","10px").style("fill","var(--plot-axis-text,#444)").text("Pixel value [e-]");
+  svg.append("text").attr("x", W-m.r-4).attr("y", H-m.b-4).attr("text-anchor","end")
+    .style("font-size","10px").style("fill","var(--plot-axis-text,#444)").style("font-style","italic").text("Pixel value [e-]");
 }
 
 /* ============================================================================
@@ -2444,7 +2524,8 @@ function drawIfsSpectrum(){
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title")
     .text(`Integrated spectrum over [${r.x1.toFixed(0)}..${r.x2.toFixed(0)}] × [${r.y1.toFixed(0)}..${r.y2.toFixed(0)}] — drag the red line to slice at another λ.`);
   // x-label top-right above the panel (avoids overlap with bottom ticks)
-  svg.append("text").attr("x", W-m.r-4).attr("y", m.t-2).attr("text-anchor","end").style("font-size","10px").style("fill","var(--plot-axis-text,#444)").text("λ [Å]");
+  svg.append("text").attr("x", W-m.r-4).attr("y", H-m.b-4).attr("text-anchor","end")
+    .style("font-size","10px").style("fill","var(--plot-axis-text,#444)").style("font-style","italic").text("λ [Å]");
 
   // ----- Draggable vertical λ cursor -----
   const lc = IFS_STATE.lambda_center;
