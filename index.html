@@ -175,6 +175,11 @@
       <div class="acc-body" id="dep-list"></div>
     </details>
 
+    <details class="acc" id="img-opts-acc">
+      <summary>Image options (Spectro image view)</summary>
+      <div id="img-opts"></div>
+    </details>
+
     <div id="accordions"></div>
 
     <details class="sheet">
@@ -319,6 +324,10 @@ function simulateImage(p){
   const cosmic_ray_loss_per_sec = p.cosmic_ray_loss_per_sec;
   const Throughput_FWHM = p.Throughput_FWHM; // Å
   const spectro = !!p.spectrograph, counting_mode = !!p.counting_mode;
+  const opt_QElambda = p.QElambda!==false;
+  const opt_atmlambda = p.atmlambda!==false;
+  const opt_skylines = !!p.sky_lines;
+  const mode = p.source_im || "Sim image";   // "Sim image" | "Source" | "Convolved source" | "SNR"
 
   // ---- Reproduce key derived quantities from Observation.initilize ----
   const fsr = 2.35, arcsec2str = Math.pow(Math.PI/180/3600, 2);
@@ -383,10 +392,24 @@ function simulateImage(p){
   // sigma_TH = Throughput_FWHM / 2.35
   const thSigma = Throughput_FWHM / 2.35;
   const throughputCurve = new Float64Array(W);
-  for (let i=0;i<W;i++) throughputCurve[i] = gauss1d(wavelengths[i], wavelength*10, thSigma);
+  if (opt_QElambda){
+    for (let i=0;i<W;i++) throughputCurve[i] = gauss1d(wavelengths[i], wavelength*10, thSigma);
+  } else {
+    throughputCurve.fill(1);
+  }
 
-  // Atmosphere curve = constant Atmosphere (we said "no λ-dependent" — stays in scalar Atmosphere)
-  const atmCurve = new Float64Array(W); atmCurve.fill(1.0);
+  // Atmosphere curve — placeholder λ-dependence: gentle drop at the band edges.
+  // (Full pwv_kpno curve is not bundled in this web port — see Info page.)
+  const atmCurve = new Float64Array(W);
+  if (opt_atmlambda){
+    // Smooth raised cosine across the band, with depth 0.15
+    for (let i=0;i<W;i++){
+      const t = (wavelengths[i] - wavelengths[0]) / (wavelengths[W-1] - wavelengths[0] || 1);
+      atmCurve[i] = 1 - 0.15*(1 - Math.cos(2*Math.PI*t))/2;
+    }
+  } else {
+    atmCurve.fill(1);
+  }
 
   // Spectral profile of the emission line: Gaussian centred mid-W, sigma = PSF_lam
   const spectralProfile = new Float64Array(W);
@@ -435,45 +458,80 @@ function simulateImage(p){
     }
   }
 
-  // Sky: constant per pixel per exposure (could be λ-modulated, but per-spec stays scalar)
-  const sky_rate = sky_e_per_pix_per_exp;        // e-/pix/exp
+  // Sky: scalar per pixel per exposure, optionally modulated with a few random emission lines.
+  // We build a per-column multiplier (length W) that is 1 by default, with Gaussian-shaped bumps.
+  const sky_rate = sky_e_per_pix_per_exp;        // e-/pix/exp (continuum baseline)
   const dark_rate = dark_per_pix_per_exp;
   const extra_rate = extra_per_pix_per_exp;
-
-  // ---- Build single exposure: total expected e- per pix = source + sky + dark + extra, then add Poisson + CIC + Gamma(EMCCD) + Normal(RN)
-  const single = new Float64Array(W*H);
-  const stack = new Float64Array(W*H);
-  const Wm1 = W*H;
-  for (let k=0;k<Wm1;k++){
-    const lam = source[k] + sky_rate + dark_rate + extra_rate;
-    let s = pois(lam);
-    if (EM_gain > 1){
-      // CIC binary 0/1 per pixel
-      if (rng() < CIC_charge) s += 1;
-      if (s > 0) s = gam(s, EM_gain);  // sum of s independent exponentials w mean EM_gain
+  let skyLineMult = null;
+  if (opt_skylines){
+    skyLineMult = new Float64Array(W); skyLineMult.fill(1);
+    // ~6 sky lines randomly placed (deterministic given the seed)
+    const rngLines = makeRng(seed^0xBEEF);
+    const nLines = 6;
+    for (let l=0;l<nLines;l++){
+      const i0 = Math.floor(rngLines()*W);
+      const sigma = 1.0 + rngLines()*1.5;   // px
+      const amp = 4 + rngLines()*8;          // multiplier at line peak
+      for (let i=0;i<W;i++){
+        skyLineMult[i] += (amp-1) * gauss1d(i, i0, sigma);
+      }
     }
-    s += norm(0, RN);
-    single[k] = s;
   }
 
-  // ---- Build stacked image: aggregate N_stack frames analytically (sum of Poissons over stack, mean RN/sqrt(N))
+  // ---- Build single + stacked images depending on the requested display mode
+  const single = new Float64Array(W*H);
+  const stack = new Float64Array(W*H);
   const Nst = N_stack;
-  for (let k=0;k<Wm1;k++){
-    const lam = (source[k] + sky_rate + dark_rate + extra_rate) * Nst;
-    let s = pois(lam);
-    if (EM_gain > 1){
-      // CIC over N_stack frames as binomial
-      const cic_sum = Nst > 0 ? pois(CIC_charge * Nst) : 0;
-      if (s + cic_sum > 0){
-        s = gam(s + cic_sum, EM_gain) / Nst;     // average gain per frame
-      } else {
-        s = 0;
+
+  // Sky per-pixel-per-frame as a column-dependent multiplier (sky lines)
+  function skyAt(col){ return skyLineMult ? sky_rate*skyLineMult[col] : sky_rate; }
+
+  if (mode === "Source" || mode === "Convolved source"){
+    // Display the noise-free source image (e-/exp), with or without convolution / slit losses already applied (we always apply slit profile above).
+    for (let j=0;j<H;j++) for (let i=0;i<W;i++) single[j*W+i] = stack[j*W+i] = source[j*W+i];
+  } else if (mode === "SNR"){
+    // Approximate per-pixel SNR map = source / sqrt(source + sky + dark + extra + RN²)
+    for (let j=0;j<H;j++){
+      for (let i=0;i<W;i++){
+        const s = source[j*W+i];
+        const bg = skyAt(i) + dark_rate + extra_rate;
+        const noise2 = s + bg + RN*RN;
+        const snr1 = noise2>0 ? s/Math.sqrt(noise2) : 0;
+        single[j*W+i] = snr1;
+        stack[j*W+i] = snr1 * Math.sqrt(Math.max(1,Nst));
       }
-    } else {
-      s = Nst > 0 ? s / Nst : 0;
     }
-    s += norm(0, Nst>0 ? RN/Math.sqrt(Nst) : RN);
-    stack[k] = s;
+  } else {
+    // "Sim image" — full Poisson + EMCCD + RN realisation
+    for (let j=0;j<H;j++){
+      const skyCol = skyAt;
+      for (let i=0;i<W;i++){
+        const lam1 = source[j*W+i] + skyCol(i) + dark_rate + extra_rate;
+        let s = pois(lam1);
+        if (EM_gain > 1){
+          if (rng() < CIC_charge) s += 1;
+          if (s > 0) s = gam(s, EM_gain);
+        }
+        s += norm(0, RN);
+        single[j*W+i] = s;
+      }
+    }
+    for (let j=0;j<H;j++){
+      for (let i=0;i<W;i++){
+        const lamN = (source[j*W+i] + skyAt(i) + dark_rate + extra_rate) * Nst;
+        let s = pois(lamN);
+        if (EM_gain > 1){
+          const cic_sum = Nst > 0 ? pois(CIC_charge * Nst) : 0;
+          if (s + cic_sum > 0) s = gam(s + cic_sum, EM_gain) / Nst;
+          else s = 0;
+        } else {
+          s = Nst > 0 ? s / Nst : 0;
+        }
+        s += norm(0, Nst>0 ? RN/Math.sqrt(Nst) : RN);
+        stack[j*W+i] = s;
+      }
+    }
   }
 
   return {
@@ -726,6 +784,14 @@ const GROUPS = ["Source","Strategy","Instrument","Spectrograph","Detector"];
 
 const FLAGS = { IFS:false, spectrograph:true, counting_mode:false };
 
+// Image-tab options (affect the Spectro image view only)
+const IMG_FLAGS = {
+  atmlambda: true,    // apply λ-dependent atmospheric transmission on the spectral profile (Gaussian-shaped, constant placeholder)
+  sky_lines: false,   // add narrow sky emission lines on top of the continuum sky
+  QElambda:  true,    // apply Throughput(λ) Gaussian shaping on the spectral axis
+  source_im: "Sim image"   // "Sim image" | "Source" | "Convolved source" | "SNR"
+};
+
 // Parameter coupling formulas — when active, the LHS is derived from the RHS and its slider is hidden.
 // Each entry: {key: target param, label: display, deps: [param names used], compute: (v)=>value}
 const DEPENDENCIES = [
@@ -795,7 +861,6 @@ function applyInstrument(name){
   }
   if ("IFS" in d) FLAGS.IFS = !!d.IFS;
   for (const k of Object.keys(PARAMS)) syncSlider(k);
-  const ifsEl = document.getElementById("flag_IFS"); if (ifsEl) ifsEl.checked = FLAGS.IFS;
 }
 
 /* ============================================================================
@@ -840,18 +905,8 @@ function buildUI(){
         scheduleUpdate();
       });
     }
-    if (group==="Spectrograph"){
-      const r = body.append("div").attr("class","flags-row");
-      r.append("label").attr("class","check").attr("title","Integral Field Spectrograph: the flux normally lost by the slit/fiber is transferred to neighbouring slices/fibres (no slit-width losses).").html('<input type="checkbox" id="flag_IFS"> IFS');
-      r.append("label").attr("class","check").attr("title","Spectrograph mode (has a dispersive element). Uncheck for imager mode.").html('<input type="checkbox" id="flag_spectro" checked> Spectrograph');
-      document.getElementById("flag_IFS").addEventListener("change",function(){FLAGS.IFS=this.checked;scheduleUpdate();});
-      document.getElementById("flag_spectro").addEventListener("change",function(){FLAGS.spectrograph=this.checked;scheduleUpdate();});
-    }
-    if (group==="Detector"){
-      const r = body.append("div").attr("class","flags-row");
-      r.append("label").attr("class","check").attr("title","EMCCD photon-counting / thresholding mode: sets ENF=1 instead of √2 (assumes optimal threshold).").html('<input type="checkbox" id="flag_counting"> γ-Threshold (photon counting)');
-      document.getElementById("flag_counting").addEventListener("change",function(){FLAGS.counting_mode=this.checked;scheduleUpdate();});
-    }
+    // (IFS, Spectrograph and γ-Threshold flag checkboxes are hidden — the FLAGS state is still driven by
+    //  the instrument spreadsheet "IFS" column / overrides in code.)
   });
 }
 
@@ -863,6 +918,34 @@ function syncSlider(k){
   inp.value = p.log ? Math.log10(Math.max(v, Math.pow(10,p.min))) : v;
   const val = document.querySelector(`[data-val="${k}"]`);
   if (val) val.textContent = p.fmt(v);
+}
+
+/* Build Image (display) options UI */
+function buildImageOptionsUI(){
+  const root = d3.select("#img-opts");
+  root.selectAll("*").remove();
+  const wrap = root.append("div").attr("class","acc-body");
+  // Display mode dropdown
+  const row0 = wrap.append("label").attr("class","kv").style("display","flex").style("gap","6px").style("margin-bottom","6px")
+    .attr("title","What to render in the Spectro image view: simulated detector image with noise, the noiseless source, the convolved source, or a per-pixel SNR map.")
+    .text("Display ");
+  const sel = row0.append("select").attr("id","img-mode");
+  ["Sim image","Source","Convolved source","SNR"].forEach(o => sel.append("option").attr("value",o).text(o));
+  sel.property("value", IMG_FLAGS.source_im).on("change", function(){ IMG_FLAGS.source_im = this.value; scheduleUpdate(); });
+
+  // Toggles
+  function tog(id, label, key, tip){
+    const r = wrap.append("label").attr("class","check").attr("title", tip).style("display","block").style("margin","2px 0");
+    r.append("input").attr("type","checkbox").attr("id",id).property("checked", IMG_FLAGS[key])
+      .on("change", function(){ IMG_FLAGS[key] = this.checked; scheduleUpdate(); });
+    r.append("span").style("margin-left","4px").text(" "+label);
+  }
+  tog("img-qe", "Throughput(λ) shaping (QE × instrument bandpass Gaussian)", "QElambda",
+    "Apply a Gaussian λ-dependent throughput (peak at the observed wavelength, FWHM = Throughput_FWHM). When off, throughput is flat across the band.");
+  tog("img-atm", "Atmospheric absorption (λ-dependent placeholder)", "atmlambda",
+    "Apply a soft λ-dependent atmospheric absorption shape (mild raised cosine across the band). The full pwv_kpno curve is not bundled in this web port.");
+  tog("img-skylines", "Sky emission lines (simulated)", "sky_lines",
+    "Inject ~6 narrow Gaussian sky lines on top of the continuum sky background. Lines are deterministic given the random seed.");
 }
 
 /* Build dependencies UI + show/hide slider rows when a dep becomes active */
@@ -1170,6 +1253,11 @@ function drawImageView(){
   applyDependenciesScalar(pa);
   pa.Signal_in = pa.Signal;
   pa.IFS = FLAGS.IFS; pa.spectrograph = FLAGS.spectrograph; pa.counting_mode = FLAGS.counting_mode;
+  // Image-tab flags
+  pa.atmlambda = IMG_FLAGS.atmlambda;
+  pa.QElambda  = IMG_FLAGS.QElambda;
+  pa.sky_lines = IMG_FLAGS.sky_lines;
+  pa.source_im = IMG_FLAGS.source_im;
   // Detector image size (kept fixed; you can change to scale with viewport)
   pa.W = 500; pa.H = 100;
   // Fresh realisation on each update — change seed deterministically so slider movement shows noise diversity
@@ -1388,6 +1476,7 @@ async function main(){
   initValuesToDefault();
   buildUI();
   buildDependencyUI();
+  buildImageOptionsUI();
   updateDepVisibility();
   buildXAxisOptions();
   try {
