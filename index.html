@@ -1980,13 +1980,15 @@ function buildIfsCubeFromModel(sim, pa, n3, seed, stack){
   // Spectral profile (normalised so Σ = 1)
   const spec = sim.spectralProfile;
 
-  // 2D spatial PSF — formulas mirror Observation.py SimulateFIREBallemCCDImage:
-  //   sigma_y_px = sqrt(min(Size_source, Slitlength)^2 + PSF_RMS_det^2) / pixel_scale   (detector pixels, along slit)
-  //   sigma_x_spx = sqrt(Size_source^2 + PSF_RMS_mask^2) / Slitwidth                    (spaxels, slicer axis)
-  // Both Size_source and PSF_RMS_* are arcsec sigmas (no 2.35 factor here).
-  const Size_eff_y = Math.min(pa.Size_source, pa.Slitlength);   // source can't extend beyond the slit length on Y
+  // 2D spatial PSF on the IFS cube. After IFS re-imagery the detector-level PSF (PSF_RMS_det) dominates
+  // BOTH spatial axes (the slicer just samples the focal plane), so we use it on Y and on X. PSF_RMS_mask
+  // is used elsewhere (slit flux losses, spectral resolution degradation) but not here.
+  //   sigma_y_px  = sqrt(min(Size_source, Slitlength)^2 + PSF_RMS_det^2) / pixel_scale   (detector pixels)
+  //   sigma_x_spx = sqrt(Size_source^2 + PSF_RMS_det^2) / Slitwidth                     (spaxels)
+  // All sigmas are arcsec (no 2.35 factor).
+  const Size_eff_y = Math.min(pa.Size_source, pa.Slitlength);
   const sigma_y_px  = Math.max(0.3, Math.sqrt(Size_eff_y*Size_eff_y + pa.PSF_RMS_det*pa.PSF_RMS_det) / pa.pixel_scale);
-  const sigma_x_spx = Math.max(0.3, Math.sqrt(pa.Size_source*pa.Size_source + pa.PSF_RMS_mask*pa.PSF_RMS_mask) / Math.max(0.001, pa.Slitwidth));
+  const sigma_x_spx = Math.max(0.3, Math.sqrt(pa.Size_source*pa.Size_source + pa.PSF_RMS_det*pa.PSF_RMS_det) / Math.max(0.001, pa.Slitwidth));
   const cy = H/2, cx = n3/2;
 
   // Precompute 2D spatial PSF, normalised so Σ_jk psf2D = 1
@@ -2159,15 +2161,16 @@ function drawIfsRect(){
   const svg = d3.select("#ov-ifs-stack");
   svg.selectAll("*").remove();
   svg.attr("viewBox", `0 0 ${IFS_STATE.n3} ${IFS_STATE.H}`);
+  // The SVG itself lets pointer events through to the canvas underneath (so the DS9 colormap drag works);
+  // only the rectangle catches events, for the rect-drag handler.
+  svg.style("pointer-events", "none");
   svg.append("rect")
+    .attr("class", "ifs-rect")
     .attr("x", r.x1).attr("y", r.y1)
     .attr("width", r.x2 - r.x1).attr("height", r.y2 - r.y1)
-    .attr("fill", "none").attr("stroke", "#000").attr("stroke-dasharray","2 1.5")
-    .attr("stroke-width", Math.max(0.6, IFS_STATE.H*0.012));
-  // small centre marker
-  const cx = (r.x1+r.x2)/2, cy = (r.y1+r.y2)/2;
-  svg.append("circle").attr("cx", cx).attr("cy", cy).attr("r", Math.max(0.7, IFS_STATE.H*0.015))
-    .attr("fill", "#E24A33");
+    .attr("fill", "none").attr("stroke", "#000")
+    .attr("stroke-width", Math.max(0.6, IFS_STATE.H*0.012))
+    .style("pointer-events", "stroke");
 }
 
 function drawIfsSpectrum(){
@@ -2201,21 +2204,18 @@ function drawIfsSpectrum(){
 function attachIfsRectDrag(){
   if (STATE._ifsDragAttached) return;
   STATE._ifsDragAttached = true;
+  // The overlay SVG is pointer-events:none so DS9 right-click drag passes through to the canvas.
+  // The rect element itself receives left-button mousedown for the drag/resize handler.
+  // We use event delegation on the SVG: an event reaches the listener only if it hit the rect (because the SVG has pointer-events:none on its background).
   const ov = document.getElementById("ov-ifs-stack");
-  // The overlay svg has pointer-events:none in CSS — we need to enable them for the drag area.
-  ov.style.pointerEvents = "auto";
-  ov.style.cursor = "move";
 
   let dragging = false, mode = null, ox = 0, oy = 0, r0 = null;
   function pickMode(svgX, svgY, r){
     const edge = Math.max(2, IFS_STATE.H*0.04);
-    // resize handles: corners
     if (Math.abs(svgX - r.x1) < edge && Math.abs(svgY - r.y1) < edge) return "nw";
     if (Math.abs(svgX - r.x2) < edge && Math.abs(svgY - r.y2) < edge) return "se";
-    // inside → move
     if (svgX > r.x1 && svgX < r.x2 && svgY > r.y1 && svgY < r.y2) return "move";
-    // outside → recentre
-    return "recentre";
+    return null;
   }
   function toSvgCoords(e){
     const rect = ov.getBoundingClientRect();
@@ -2226,19 +2226,16 @@ function attachIfsRectDrag(){
   }
   ov.addEventListener("mousedown", e=>{
     if (!IFS_STATE.rect) return;
+    // ignore right-click and ctrl-click — those are reserved for DS9 colormap drag on the canvas underneath
+    if (e.button !== 0 || e.ctrlKey) return;
+    // Only fire if the target is the rect element itself (not the SVG background — which is pointer-events:none anyway, but guard for safety)
+    if (e.target.tagName !== "rect") return;
     e.preventDefault();
     const p = toSvgCoords(e);
-    const r = IFS_STATE.rect;
-    mode = pickMode(p.x, p.y, r);
-    if (mode === "recentre"){
-      // Centre the rectangle on the click position, keep size
-      const w = r.x2-r.x1, h = r.y2-r.y1;
-      IFS_STATE.rect = { x1: p.x-w/2, x2: p.x+w/2, y1: p.y-h/2, y2: p.y+h/2 };
-      mode = "move";
-    }
+    mode = pickMode(p.x, p.y, IFS_STATE.rect);
+    if (!mode) return;
     dragging = true;
     ox = p.x; oy = p.y; r0 = {...IFS_STATE.rect};
-    drawIfsRect(); drawIfsSpectrum();
   });
   window.addEventListener("mousemove", e=>{
     if (!dragging) return;
@@ -2256,7 +2253,6 @@ function attachIfsRectDrag(){
       if (r.x2 - r.x1 < 1) r.x2 = r.x1 + 1;
       if (r.y2 - r.y1 < 1) r.y2 = r.y1 + 1;
     }
-    // Clamp to cube bounds
     r.x1 = Math.max(0, Math.min(IFS_STATE.n3 - 1, r.x1));
     r.x2 = Math.max(1, Math.min(IFS_STATE.n3,     r.x2));
     r.y1 = Math.max(0, Math.min(IFS_STATE.H  - 1, r.y1));
