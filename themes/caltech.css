@@ -1,0 +1,57 @@
+/* Caltech-clean theme — modern sober palette with teal + gold accents.
+   Inspired by https://datavis.caltech.edu/ project pages. */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root{
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: var(--font-ui);
+
+  /* Light */
+  --bg:#f5f7fa;
+  --bg-alt:#eef2f7;
+  --panel:#ffffff;
+  --panel-2:#fafbfc;
+  --line:#e0e6ed;
+  --line-strong:#cbd3dc;
+  --text:#1f2933;
+  --text-soft:#3e4c59;
+  --muted:#7b8794;
+  --header-bg:#ffffff;
+  --header-text:#1f2933;
+  --accordion-summary-bg:#f0f3f7;
+  --tab-bg:#eef2f7;
+  --tab-active-bg:#ffffff;
+  --tab-text:#7b8794;
+  --tooltip-bg:rgba(31,41,51,0.92);
+  --tooltip-text:#ffffff;
+  --accent:#4FD3C4;
+  --accent-2:#F4C95D;
+  --shadow-elev-1:0 1px 3px rgba(31,41,51,0.06), 0 1px 2px rgba(31,41,51,0.04);
+  --radius:8px;
+  --radius-sm:4px;
+}
+
+body[data-mode="dark"]{
+  --bg:#0f1419;
+  --bg-alt:#161b22;
+  --panel:#1a2028;
+  --panel-2:#161b22;
+  --line:#2a323b;
+  --line-strong:#3b4651;
+  --text:#e6ebf0;
+  --text-soft:#b8c2cc;
+  --muted:#7a8693;
+  --header-bg:#0a0e13;
+  --header-text:#e6ebf0;
+  --accordion-summary-bg:#161b22;
+  --tab-bg:#161b22;
+  --tab-active-bg:#1a2028;
+  --tab-text:#7a8693;
+  --tooltip-bg:rgba(0,0,0,0.92);
+  --tooltip-text:#e6ebf0;
+  --accent:#4FD3C4;
+  --accent-2:#F4C95D;
+  --shadow-elev-1:0 1px 3px rgba(0,0,0,0.4);
+}

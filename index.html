@@ -7,50 +7,143 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <!-- Baked spectra data — also accessible via fetch("data/spectra.json"). The .js wrapper lets file:// work. -->
 <script src="data/spectra.js"></script>
+<!-- Theme stylesheet (overrides CSS variables defined in :root below). -->
+<link id="theme-css" rel="stylesheet" href="themes/default.css">
 <style>
+  /* ===== DESIGN TOKENS ============================================================
+     All visible style is parameterised through CSS variables so that theme files in
+     themes/*.css just override them. data-mode="dark" on <body> picks the dark set.
+     The plot internals (SVG colors, canvas colormap) are NOT theme-controlled — only
+     the surrounding UI chrome is. */
   :root{
-    --bg:#f7f7f7; --panel:#ffffff; --line:#e2e2e2; --text:#1a1a1a; --muted:#666;
-    --accent:#348ABD; --accent2:#E24A33;
+    /* Sizing */
     --header-h: 38px;
+    --radius:6px;
+    --radius-sm:3px;
+    --gap:8px;
+    --gap-sm:6px;
+
+    /* Typography */
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono", Menlo, monospace;
+    --font-display: var(--font-ui);
+    --letter-spacing-display: 0;
+    --text-transform-display: none;
+
+    /* Light palette (default) */
+    --bg:#f7f7f7;
+    --bg-alt:#f0f0f0;
+    --panel:#ffffff;
+    --panel-2:#fafafa;
+    --line:#e2e2e2;
+    --line-strong:#cccccc;
+    --text:#1a1a1a;
+    --text-soft:#444444;
+    --muted:#666666;
+    --header-bg:#ffffff;
+    --header-text:var(--text);
+    --accordion-summary-bg:#f3f3f3;
+    --tab-bg:#ececec;
+    --tab-active-bg:#ffffff;
+    --tab-text:#444444;
+    --tooltip-bg:rgba(0,0,0,0.85);
+    --tooltip-text:#ffffff;
+    --accent:#348ABD;
+    --accent-2:#E24A33;
+    --error:#c00000;
+    --img-bg:#000000;
+    --img-cell-title-bg:rgba(0,0,0,0.55);
+    --img-cell-title-text:#ffffff;
+    --shadow-elev-1:0 1px 2px rgba(0,0,0,0.04);
+
+    /* Plot SVG/canvas — NEVER themed (kept for consistency across all themes) */
+    --plot-axis-text:#333333;
+    --plot-axis-line:#888888;
+    --plot-legend-text:#222222;
+    --plot-vline:#000000;
+    --plot-vline-hover:#E24A33;
+    --plot-ax-title:#222222;
+    --plot-bg:#ffffff;
   }
+
+  /* Dark palette baseline. Themes can re-override any of these. */
+  body[data-mode="dark"]{
+    --bg:#161a20;
+    --bg-alt:#1c2128;
+    --panel:#21262d;
+    --panel-2:#1c2128;
+    --line:#30363d;
+    --line-strong:#444c56;
+    --text:#e6edf3;
+    --text-soft:#c9d1d9;
+    --muted:#8b949e;
+    --header-bg:#0d1117;
+    --header-text:#e6edf3;
+    --accordion-summary-bg:#161a20;
+    --tab-bg:#161a20;
+    --tab-active-bg:#21262d;
+    --tab-text:#8b949e;
+    --tooltip-bg:rgba(0,0,0,0.92);
+    --tooltip-text:#e6edf3;
+    --accent:#58a6ff;
+    --accent-2:#ff7b72;
+    --error:#f85149;
+    --img-bg:#000000;
+    --shadow-elev-1:0 1px 2px rgba(0,0,0,0.4);
+  }
+
+  /* ===== BASE ================================================================== */
   *{box-sizing:border-box}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
-    font:13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font:13px/1.35 var(--font-ui);
     height:100%;width:100%;overflow:hidden}
 
   /* Header */
   header{height:var(--header-h);display:flex;align-items:center;gap:10px;padding:0 12px;
-    border-bottom:1px solid var(--line);background:#fff;position:relative;z-index:5}
-  header h1{margin:0;font-size:14px;font-weight:600;flex:0 0 auto}
+    border-bottom:1px solid var(--line);background:var(--header-bg);color:var(--header-text);
+    position:relative;z-index:5}
+  header h1{margin:0;font-size:14px;font-weight:600;flex:0 0 auto;
+    font-family:var(--font-display);letter-spacing:var(--letter-spacing-display);text-transform:var(--text-transform-display)}
   header nav{flex:1;display:flex;gap:6px;align-items:center}
-  header nav a{font-size:12px;color:var(--muted);text-decoration:none;padding:3px 8px;border:1px solid transparent;border-radius:3px}
-  header nav a.active,header nav a:hover{background:#f0f0f0;color:var(--text);border-color:var(--line)}
-  header .meta{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  header nav a{font-size:12px;color:var(--muted);text-decoration:none;padding:3px 8px;
+    border:1px solid transparent;border-radius:var(--radius-sm)}
+  header nav a.active,header nav a:hover{background:var(--bg-alt);color:var(--text);border-color:var(--line)}
+  header .meta{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;font-family:var(--font-mono)}
+  header .theme-controls{display:flex;gap:4px;align-items:center;flex:0 0 auto;margin-left:auto}
+  header .theme-controls select,
+  header .theme-controls button{font-size:11px;padding:2px 6px}
+  #theme-toggle{font-size:14px;width:26px;height:22px;line-height:1;padding:0;background:transparent;border:1px solid var(--line);
+    color:var(--text);border-radius:var(--radius-sm);cursor:pointer}
+  #theme-toggle:hover{background:var(--bg-alt)}
 
   /* App grid — fills the remaining viewport */
-  .app{display:grid;grid-template-columns: minmax(0,1fr) 480px;gap:8px;padding:8px;
+  .app{display:grid;grid-template-columns: minmax(0,1fr) 480px;gap:var(--gap);padding:var(--gap);
     height: calc(100vh - var(--header-h)); width:100%}
-  #plot-wrap{background:var(--panel);border:1px solid var(--line);border-radius:6px;
-    padding:6px;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
-  #controls{background:var(--panel);border:1px solid var(--line);border-radius:6px;
-    padding:8px;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+  #plot-wrap{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:var(--gap-sm);display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;
+    box-shadow:var(--shadow-elev-1)}
+  #controls{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:var(--gap);min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:var(--gap);
+    box-shadow:var(--shadow-elev-1)}
 
   /* Top row controls */
   .topbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex:0 0 auto}
   .topbar > *{flex:0 0 auto}
   label.kv{display:flex;align-items:center;gap:4px;font-size:11.5px;color:var(--muted)}
-  select,input[type="text"],input[type="number"]{font:12px inherit;padding:2px 4px;
-    border:1px solid #ccc;border-radius:3px;background:#fff;color:var(--text)}
-  button{font:12px inherit;padding:3px 8px;border:1px solid #ccc;background:#fff;
-    border-radius:3px;cursor:pointer}
-  button:hover{background:#f0f0f0}
-  .check{display:flex;align-items:center;gap:3px;font-size:11.5px;color:#333}
+  select,input[type="text"],input[type="number"]{font:12px var(--font-ui);padding:2px 4px;
+    border:1px solid var(--line-strong);border-radius:var(--radius-sm);background:var(--panel);color:var(--text)}
+  select:hover,input:hover{border-color:var(--accent)}
+  button{font:12px var(--font-ui);padding:3px 8px;border:1px solid var(--line-strong);background:var(--panel);color:var(--text);
+    border-radius:var(--radius-sm);cursor:pointer}
+  button:hover{background:var(--bg-alt)}
+  .check{display:flex;align-items:center;gap:3px;font-size:11.5px;color:var(--text-soft)}
 
   /* Accordions */
-  .acc{border:1px solid var(--line);border-radius:4px;background:#fff}
+  .acc{border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel)}
   .acc > summary{padding:5px 8px;cursor:pointer;font-weight:600;font-size:12px;
-    background:#f3f3f3;border-radius:4px 4px 0 0;list-style:none;
-    display:flex;justify-content:space-between;align-items:center;user-select:none}
+    background:var(--accordion-summary-bg);border-radius:var(--radius-sm) var(--radius-sm) 0 0;list-style:none;
+    display:flex;justify-content:space-between;align-items:center;user-select:none;color:var(--text);
+    font-family:var(--font-display);letter-spacing:var(--letter-spacing-display);text-transform:var(--text-transform-display)}
   .acc[open] > summary{border-bottom:1px solid var(--line)}
   .acc > summary::after{content:"▾";color:var(--muted);font-size:10px}
   .acc[open] > summary::after{content:"▴"}
@@ -61,62 +154,63 @@
     align-items:center;margin-bottom:4px}
   .slider-row label{font-size:11px;color:var(--muted);cursor:pointer;user-select:none}
   .slider-row label:hover{color:var(--accent);text-decoration:underline}
-  .slider-row label.is-x{color:var(--accent2);font-weight:600}
+  .slider-row label.is-x{color:var(--accent-2);font-weight:600}
   .slider-row input[type="range"]{width:100%;accent-color:var(--accent)}
   .slider-row .val{font-size:11px;text-align:right;color:var(--text);
-    font-variant-numeric:tabular-nums}
+    font-variant-numeric:tabular-nums;font-family:var(--font-mono)}
   .flags-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 
   /* Plot */
-  #status{font-size:11px;color:var(--muted);padding:2px 4px;flex:0 0 auto}
-  #status.err{color:#c00}
+  #status{font-size:11px;color:var(--muted);padding:2px 4px;flex:0 0 auto;font-family:var(--font-mono)}
+  #status.err{color:var(--error)}
   .plot-area{flex:1 1 auto;min-height:0;width:100%;position:relative;display:flex;flex-direction:column;overflow:hidden}
   .plot-area > svg, .plot-area > .img-view{display:none;flex:1 1 0;min-height:0;width:100%;height:100%}
   .plot-area > svg.active{display:block}
   .plot-area > .img-view.active{display:flex}
   #plot{display:none;width:100%;height:100%}
   #plot.active{display:block}
-  .plot-axis text{font-size:10px;fill:#333}
-  .plot-axis path,.plot-axis line{stroke:#888;shape-rendering:crispEdges}
-  .legend{font-size:10.5px;fill:#222}
-  .vline{stroke:#000;stroke-width:1.4;stroke-dasharray:3,3;pointer-events:none}
+  .plot-axis text{font-size:10px;fill:var(--plot-axis-text)}
+  .plot-axis path,.plot-axis line{stroke:var(--plot-axis-line);shape-rendering:crispEdges}
+  .legend{font-size:10.5px;fill:var(--plot-legend-text)}
+  .vline{stroke:var(--plot-vline);stroke-width:1.4;stroke-dasharray:3,3;pointer-events:none}
   .vline-hit{cursor:ew-resize}
-  .vline-hit:hover ~ .vline, .vline-hit:hover + .vline{stroke:#E24A33;stroke-width:1.8}
-  .ax-title{font-size:11px;fill:#222;font-weight:600}
+  .vline-hit:hover ~ .vline, .vline-hit:hover + .vline{stroke:var(--plot-vline-hover);stroke-width:1.8}
+  .ax-title{font-size:11px;fill:var(--plot-ax-title);font-weight:600}
 
-  /* View tabs (SNR / Spectro image) */
+  /* View tabs (SNR / Spectro image / IFS) */
   .view-tabs{display:flex;gap:2px;flex:0 0 auto;margin-bottom:4px}
-  .view-tab{padding:3px 10px;font-size:11.5px;background:#ececec;border:1px solid var(--line);
-    border-bottom:none;border-radius:4px 4px 0 0;cursor:pointer;color:#444}
-  .view-tab.active{background:#fff;color:var(--text);font-weight:600}
+  .view-tab{padding:3px 10px;font-size:11.5px;background:var(--tab-bg);border:1px solid var(--line);
+    border-bottom:none;border-radius:var(--radius-sm) var(--radius-sm) 0 0;cursor:pointer;color:var(--tab-text);
+    font-family:var(--font-display);letter-spacing:var(--letter-spacing-display);text-transform:var(--text-transform-display)}
+  .view-tab.active{background:var(--tab-active-bg);color:var(--text);font-weight:600}
 
   /* Spectro image view: fixed proportion between imshow stack (top 55%) and analysis panels (bottom 45%) */
   .img-view{flex-direction:column;gap:4px;padding:2px;min-height:0;height:100%;overflow:hidden}
   .img-row{display:flex;flex-direction:column;gap:6px;height:55%;min-height:0;flex:none}
   /* Horizontal variant: two imshow cells side-by-side (used by the IFS view) */
   .img-row-h{display:grid;grid-template-columns:1fr 1fr;gap:6px;height:55%;min-height:0;flex:none}
-  .img-cell{border:1px solid var(--line);border-radius:3px;background:#000;
+  .img-cell{border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--img-bg);
     position:relative;overflow:hidden;display:block;width:100%;flex:1 1 0;min-height:0}
-  .img-cell .cell-title{font-size:11px;color:#fff;background:rgba(0,0,0,0.55);
-    padding:2px 6px;position:absolute;top:0;left:0;right:0;z-index:3}
+  .img-cell .cell-title{font-size:11px;color:var(--img-cell-title-text);background:var(--img-cell-title-bg);
+    padding:2px 6px;position:absolute;top:0;left:0;right:0;z-index:3;font-family:var(--font-mono)}
   /* Canvas fills the cell, stretched in pixel-art mode — image aspect is not preserved (it's 500×100, very thin) */
   .img-cell canvas{width:100%;height:100%;display:block;image-rendering:pixelated;position:relative;z-index:1;cursor:crosshair}
   .img-cell svg.overlay{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
-  /* 2×2 grid of analysis sub-plots: left col = spatial profile + histogram, right col = spectral profile + optics */
+  /* 2×2 grid of analysis sub-plots */
   .img-extra{height:45%;min-height:0;flex:none;display:grid;
     grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px;overflow:hidden}
   .img-extra > svg{display:block;border:1px solid var(--line);
-    border-radius:3px;background:#fff;min-height:0;min-width:0;overflow:hidden}
+    border-radius:var(--radius-sm);background:var(--plot-bg);min-height:0;min-width:0;overflow:hidden}
 
   /* Pixel hover tooltip */
-  #pixtip{position:fixed;pointer-events:none;background:rgba(0,0,0,0.85);color:#fff;
-    font-size:11px;padding:4px 7px;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-    z-index:9999;white-space:pre;display:none;line-height:1.35}
+  #pixtip{position:fixed;pointer-events:none;background:var(--tooltip-bg);color:var(--tooltip-text);
+    font-size:11px;padding:4px 7px;border-radius:var(--radius-sm);font-family:var(--font-mono);
+    z-index:9999;white-space:pre;display:none;line-height:1.35;border:1px solid rgba(255,255,255,0.08)}
 
   details.sheet{margin-top:auto;flex:0 0 auto}
   details.sheet summary{cursor:pointer;color:var(--muted);font-size:11px}
   details.sheet input{width:100%;margin-top:4px;font-size:11px;padding:2px 4px;
-    border:1px solid #ccc;border-radius:3px}
+    border:1px solid var(--line-strong);border-radius:var(--radius-sm);background:var(--panel);color:var(--text)}
 
   /* === Responsive: mobile === */
   @media (max-width: 820px){
@@ -142,6 +236,16 @@
     <a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit" target="_blank">Instrument DB</a>
   </nav>
   <span id="meta" class="meta"></span>
+  <span class="theme-controls">
+    <select id="theme-select" title="Visual theme — only changes UI chrome, never the plots.">
+      <option value="default">Default</option>
+      <option value="caltech">Caltech</option>
+      <option value="nasa">NASA Mission Control</option>
+      <option value="twilight">Astronomical Twilight</option>
+      <option value="terminal">High-density Terminal</option>
+    </select>
+    <button id="theme-toggle" title="Toggle dark / light mode">🌙</button>
+  </span>
 </header>
 
 <div class="app">
@@ -2579,6 +2683,39 @@ async function loadSpectraData(){
   d3.select("#status").classed("err", true)
     .text("⚠ Could not load spectra.js — the Spectrum dropdown will only show 'Baseline emission line'.");
 }
+
+/* ============================================================================
+   THEME / DARK MODE
+   ============================================================================ */
+const THEME_LIST = ["default","caltech","nasa","twilight","terminal"];
+function applyTheme(name){
+  if (!THEME_LIST.includes(name)) name = "default";
+  document.getElementById("theme-css").setAttribute("href", `themes/${name}.css`);
+  try { localStorage.setItem("etc.theme", name); } catch(e){}
+  const sel = document.getElementById("theme-select"); if (sel) sel.value = name;
+}
+function applyMode(mode){
+  if (mode !== "dark" && mode !== "light") mode = "light";
+  document.body.setAttribute("data-mode", mode);
+  try { localStorage.setItem("etc.mode", mode); } catch(e){}
+  const btn = document.getElementById("theme-toggle");
+  if (btn) btn.textContent = (mode === "dark") ? "☀" : "🌙";
+}
+function initTheme(){
+  let theme = "default", mode = "light";
+  try {
+    theme = localStorage.getItem("etc.theme") || theme;
+    mode  = localStorage.getItem("etc.mode")  || mode;
+  } catch(e){}
+  applyTheme(theme);
+  applyMode(mode);
+  const sel = document.getElementById("theme-select");
+  if (sel) sel.addEventListener("change", e => applyTheme(e.target.value));
+  const btn = document.getElementById("theme-toggle");
+  if (btn) btn.addEventListener("click", () => applyMode(document.body.getAttribute("data-mode") === "dark" ? "light" : "dark"));
+}
+// Apply ASAP — before main runs, to avoid flicker.
+initTheme();
 
 async function main(){
   initValuesToDefault();

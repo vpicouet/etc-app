@@ -1,0 +1,64 @@
+/* NASA Mission Control theme — deep navy panels, green phosphor accents,
+   amber for warnings/SNR. Headers in spaced uppercase. JetBrains Mono for chiffres. */
+
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@500;600;700&display=swap");
+
+:root{
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: "JetBrains Mono", monospace;
+  --letter-spacing-display: 0.08em;
+  --text-transform-display: uppercase;
+
+  /* Light variant (less common for this theme but available) */
+  --bg:#e9eef3;
+  --bg-alt:#dde4ec;
+  --panel:#ffffff;
+  --panel-2:#f5f8fb;
+  --line:#c5cdd8;
+  --line-strong:#9da7b5;
+  --text:#0a2030;
+  --text-soft:#26384a;
+  --muted:#506478;
+  --header-bg:#0a2030;
+  --header-text:#7CFC9C;
+  --accordion-summary-bg:#dde4ec;
+  --tab-bg:#dde4ec;
+  --tab-active-bg:#ffffff;
+  --tab-text:#506478;
+  --tooltip-bg:rgba(10,32,48,0.95);
+  --tooltip-text:#7CFC9C;
+  --accent:#0a8a5f;
+  --accent-2:#c66a00;
+  --shadow-elev-1:none;
+  --radius:3px;
+  --radius-sm:2px;
+}
+
+/* Dark (mission control) */
+body[data-mode="dark"]{
+  --bg:#0a0e14;
+  --bg-alt:#10171f;
+  --panel:#141a21;
+  --panel-2:#101720;
+  --line:#1f2a36;
+  --line-strong:#314358;
+  --text:#cfe8d8;
+  --text-soft:#b0c8bc;
+  --muted:#6a8090;
+  --header-bg:#050a10;
+  --header-text:#7CFC9C;
+  --accordion-summary-bg:#10171f;
+  --tab-bg:#10171f;
+  --tab-active-bg:#141a21;
+  --tab-text:#6a8090;
+  --tooltip-bg:rgba(5,10,16,0.96);
+  --tooltip-text:#7CFC9C;
+  --accent:#7CFC9C;             /* phosphor green = current value / active */
+  --accent-2:#FFB454;            /* amber = warnings / x-axis highlight */
+  --shadow-elev-1:none;
+}
+
+/* Subtle "phosphor" glow on accents */
+body[data-mode="dark"] .slider-row label.is-x{ text-shadow:0 0 6px rgba(255,180,84,0.4); }
+body[data-mode="dark"] header h1{ text-shadow:0 0 8px rgba(124,252,156,0.25); }

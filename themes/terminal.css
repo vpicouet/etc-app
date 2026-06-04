@@ -1,0 +1,58 @@
+/* High-density Terminal — all mono, pure dark, sharp 90° corners. Most austere. */
+
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap");
+
+:root{
+  --font-ui: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: "IBM Plex Mono", monospace;
+  --letter-spacing-display: 0.04em;
+  --text-transform-display: uppercase;
+  --radius:0;
+  --radius-sm:0;
+
+  /* Light — usable but minimal */
+  --bg:#ffffff;
+  --bg-alt:#f4f4f4;
+  --panel:#ffffff;
+  --panel-2:#fafafa;
+  --line:#222222;
+  --line-strong:#000000;
+  --text:#000000;
+  --text-soft:#222222;
+  --muted:#555555;
+  --header-bg:#ffffff;
+  --header-text:#000000;
+  --accordion-summary-bg:#f0f0f0;
+  --tab-bg:#e0e0e0;
+  --tab-active-bg:#ffffff;
+  --tab-text:#444444;
+  --tooltip-bg:#000000;
+  --tooltip-text:#00ff88;
+  --accent:#0066cc;
+  --accent-2:#cc4400;
+  --shadow-elev-1:none;
+}
+
+body[data-mode="dark"]{
+  --bg:#000000;
+  --bg-alt:#0a0a0a;
+  --panel:#0d0d0d;
+  --panel-2:#070707;
+  --line:#222222;
+  --line-strong:#444444;
+  --text:#e6e6e6;
+  --text-soft:#bababa;
+  --muted:#6e6e6e;
+  --header-bg:#000000;
+  --header-text:#e6e6e6;
+  --accordion-summary-bg:#0a0a0a;
+  --tab-bg:#0a0a0a;
+  --tab-active-bg:#0d0d0d;
+  --tab-text:#6e6e6e;
+  --tooltip-bg:#000000;
+  --tooltip-text:#00ff88;
+  --accent:#00b3ff;
+  --accent-2:#ff6633;
+  --shadow-elev-1:none;
+}

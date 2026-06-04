@@ -1,0 +1,11 @@
+/* Default theme — kept close to the original look (light mode).
+   Dark mode = the baseline dark palette defined in index.html.
+   This file is intentionally minimal — it lets index.html's :root variables stand. */
+
+/* Nothing to override in light mode. */
+
+/* Soften the dark default a touch */
+body[data-mode="dark"]{
+  --accent:#58a6ff;
+  --accent-2:#ff7b72;
+}
