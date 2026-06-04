@@ -86,12 +86,13 @@
 
   /* Spectro image view */
   .img-view{flex-direction:column;gap:4px;padding:2px}
-  .img-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:0 0 auto}
+  .img-row{display:flex;flex-direction:column;gap:6px;flex:0 0 auto}
   .img-cell{border:1px solid var(--line);border-radius:3px;background:#000;
-    position:relative;overflow:hidden;display:flex;flex-direction:column}
+    position:relative;overflow:hidden;display:block;width:100%}
   .img-cell .cell-title{font-size:11px;color:#fff;background:rgba(0,0,0,0.55);
-    padding:2px 6px;position:absolute;top:0;left:0;right:0;z-index:2}
-  .img-cell canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
+    padding:2px 6px;position:absolute;top:0;left:0;right:0;z-index:3}
+  .img-cell canvas{width:100%;height:auto;display:block;image-rendering:pixelated;position:relative;z-index:1}
+  .img-cell svg.overlay{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
   .img-extra{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff}
 
@@ -135,8 +136,16 @@
       <svg id="plot" class="active" preserveAspectRatio="none"></svg>
       <div id="plot-img" class="img-view">
         <div class="img-row">
-          <div class="img-cell"><div class="cell-title" id="img-single-title">Single exposure</div><canvas id="cv-single"></canvas></div>
-          <div class="img-cell"><div class="cell-title" id="img-stack-title">Stacked</div><canvas id="cv-stack"></canvas></div>
+          <div class="img-cell">
+            <div class="cell-title" id="img-single-title">Single exposure</div>
+            <canvas id="cv-single"></canvas>
+            <svg id="ov-single" class="overlay" preserveAspectRatio="none"></svg>
+          </div>
+          <div class="img-cell">
+            <div class="cell-title" id="img-stack-title">Stacked</div>
+            <canvas id="cv-stack"></canvas>
+            <svg id="ov-stack" class="overlay" preserveAspectRatio="none"></svg>
+          </div>
         </div>
         <div class="img-extra">
           <svg id="svg-profiles"></svg>
@@ -1178,16 +1187,43 @@ function drawImageView(){
   const vminK = percentile(sim.stack,  0.01), vmaxK = percentile(sim.stack,  0.99);
   rasterizeImage(cvS, sim.single, sim.W, sim.H, vminS, vmaxS);
   rasterizeImage(cvK, sim.stack,  sim.W, sim.H, vminK, vmaxK);
+  drawSlitOverlay("ov-single", pa, sim);
+  drawSlitOverlay("ov-stack",  pa, sim);
 
   document.getElementById("img-single-title").textContent =
-    `Single exposure (${sim.W}×${sim.H}, ${sim.W*sim.xPhys_per_pix|0}Å × ${(sim.H*sim.yPhys_per_pix).toFixed(1)}″)`;
+    `Single exposure (${sim.W}×${sim.H} pix = ${(sim.W*sim.xPhys_per_pix).toFixed(0)}Å × ${(sim.H*sim.yPhys_per_pix).toFixed(1)}″) — slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″`;
   document.getElementById("img-stack-title").textContent =
-    `Stacked (${sim.N_stack} frames, T_acq=${(STATE.values.acquisition_time).toFixed(1)}h)`;
+    `Stacked (${sim.N_stack} frames, T_acq=${(STATE.values.acquisition_time).toFixed(1)}h) — slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″`;
 
   // ===== Profiles SVG (spatial avg + spectral avg, single & stacked) =====
   drawProfiles(sim);
   // ===== Histogram SVG =====
   drawHistogram(sim);
+}
+
+function drawSlitOverlay(svgId, pa, sim){
+  // Detector image is W (cols, spectral) × H (rows, spatial).
+  // Slit extends along the spatial axis (rows) over Slitlength/pixel_scale pixels, centred on H/2.
+  // We draw two horizontal lines at the slit edges, and a small annotation showing the slit dims.
+  const svg = d3.select("#"+svgId);
+  svg.selectAll("*").remove();
+  if (!pa.spectrograph) return;  // imager: no slit
+  const slitH_pix = pa.Slitlength / pa.pixel_scale;   // detector pixels along H
+  // Convert to overlay coordinates: SVG uses 0..100 normalised viewport, but preserveAspectRatio="none"
+  // so we use the underlying canvas pixel space. Set viewBox to match.
+  svg.attr("viewBox", `0 0 ${sim.W} ${sim.H}`);
+  const y0 = sim.H/2 - slitH_pix/2;
+  const y1 = sim.H/2 + slitH_pix/2;
+  // Rectangle showing the slit footprint (full spectral extent × slit height)
+  svg.append("rect").attr("x", 0).attr("y", Math.max(0,y0))
+    .attr("width", sim.W).attr("height", Math.min(sim.H, slitH_pix))
+    .attr("fill","none").attr("stroke","#ff3").attr("stroke-width", Math.max(0.5, sim.H*0.005))
+    .attr("stroke-dasharray", `${sim.W*0.012} ${sim.W*0.008}`);
+  // Small label
+  svg.append("text").attr("x", sim.W*0.012).attr("y", Math.max(8, y0-2))
+    .attr("fill","#ff3").attr("font-size", Math.max(8, sim.H*0.07))
+    .attr("font-family","-apple-system, sans-serif").attr("font-weight","600")
+    .text(`slit: ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″ (= ${slitH_pix.toFixed(1)} px along spatial)`);
 }
 
 function drawProfiles(sim){
