@@ -5,6 +5,8 @@
 <title>Generic ETC — SNR calculator</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<!-- Baked spectra data — also accessible via fetch("data/spectra.json"). The .js wrapper lets file:// work. -->
+<script src="data/spectra.js"></script>
 <style>
   :root{
     --bg:#f7f7f7; --panel:#ffffff; --line:#e2e2e2; --text:#1a1a1a; --muted:#666;
@@ -2457,7 +2459,17 @@ function buildInstrumentOptions(){
 }
 
 async function loadSpectraData(){
-  // Try a couple of relative paths in order. file:// will fail on all of them (CORS for null origin).
+  // First preference: the global set by data/spectra.js (loaded via <script>). Works on file:// too.
+  if (typeof window !== "undefined" && window.SPECTRA_DATA_BAKED){
+    SPECTRA_DATA = window.SPECTRA_DATA_BAKED;
+    const nSpec = Object.keys(SPECTRA_DATA.spectra||{}).length;
+    const nAtm  = Object.keys(SPECTRA_DATA.atm||{}).length;
+    const nSky  = Object.keys(SPECTRA_DATA.sky_lines||{}).length;
+    console.log(`Loaded baked spectra: ${nSpec} spectra, ${nAtm} atm, ${nSky} sky-line catalogues`);
+    if (document.getElementById("img-spec")) buildImageOptionsUI();
+    return;
+  }
+  // Fallback: fetch the .json — try a few relative paths.
   const candidates = ["data/spectra.json", "./data/spectra.json", "/etc-app/data/spectra.json"];
   for (const url of candidates){
     try {
@@ -2465,19 +2477,15 @@ async function loadSpectraData(){
       if (!r.ok) continue;
       SPECTRA_DATA = await r.json();
       const nSpec = Object.keys(SPECTRA_DATA.spectra||{}).length;
-      const nAtm  = Object.keys(SPECTRA_DATA.atm||{}).length;
-      const nSky  = Object.keys(SPECTRA_DATA.sky_lines||{}).length;
-      console.log(`Loaded ${url}: ${nSpec} spectra, ${nAtm} atm, ${nSky} sky-line catalogues`);
-      // If the Image-options dropdowns were already built before this fetch finished, rebuild them now.
+      console.log(`Loaded ${url}: ${nSpec} spectra`);
       if (document.getElementById("img-spec")) buildImageOptionsUI();
       return;
     } catch (e){ /* try next */ }
   }
-  console.warn("Could not load spectra.json from any candidate URL — only 'Baseline emission line' will be available.");
+  console.warn("Could not load spectra (neither baked global nor fetch) — only 'Baseline emission line' will be available.");
   SPECTRA_DATA = null;
-  // Make this visible to the user
   d3.select("#status").classed("err", true)
-    .text("⚠ data/spectra.json not loaded — the Spectrum dropdown will only show 'Baseline emission line'. (file:// will not work — use an http server or the GitHub Pages URL.)");
+    .text("⚠ Could not load spectra.js — the Spectrum dropdown will only show 'Baseline emission line'.");
 }
 
 async function main(){
