@@ -1225,19 +1225,37 @@ function drawPanel(svg, panel, x, xScale, allY, ylog, title, drawLines){
   }
   const xAxisScale = xScale.copy().range([panel.x, panel.x+panel.w]);
   const yAxisScale = yScale.copy().range([panel.y+panel.h, panel.y]);
-  // Fewer ticks: x-axis only labelled on the last panel; intermediate panels show tick marks but no text
   const nx = panel.w < 380 ? 3 : 4;
   const ny = panel.h < 90 ? 3 : 4;
-  const fmt = d3.format(".2~g");
-  const xAxis = d3.axisBottom(xAxisScale).ticks(nx).tickFormat(panel.isLast ? fmt : "").tickSizeOuter(0);
+  const xAxis = makeAxis(d3.axisBottom, xAxisScale, nx, panel.isLast);
   if (!panel.isLast) xAxis.tickSize(3);
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${panel.y+panel.h})`).call(xAxis);
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${panel.x},0)`)
-    .call(d3.axisLeft(yAxisScale).ticks(ny).tickFormat(fmt).tickSizeOuter(0));
+    .call(makeAxis(d3.axisLeft, yAxisScale, ny, true));
   svg.append("text").attr("class","ax-title")
     .attr("transform",`translate(${panel.x-50},${panel.y+panel.h/2}) rotate(-90)`)
     .attr("text-anchor","middle").text(title);
   drawLines(svg.append("g"));
+}
+
+/* Build an axis with sparse tick labels — works for both linear and log scales.
+   For log scales, d3.scaleLog().ticks(n) ignores n; we instead enumerate decades and keep at most n. */
+function makeAxis(axisFn, scale, nMax, withLabels){
+  const isLog = (scale.base !== undefined);    // d3.scaleLog has .base()
+  const fmt = d3.format(".2~g");
+  if (isLog){
+    const [a,b] = scale.domain();
+    const la = Math.floor(Math.log10(Math.max(a, 1e-30)));
+    const lb = Math.ceil(Math.log10(Math.max(b, 10*a)));
+    const decades = [];
+    for (let k=la; k<=lb; k++) decades.push(Math.pow(10,k));
+    // Down-sample if too many
+    let step = Math.max(1, Math.ceil(decades.length / nMax));
+    const kept = decades.filter((_,i)=> i%step === 0);
+    return axisFn(scale).tickValues(kept).tickFormat(withLabels ? fmt : "").tickSizeOuter(0);
+  } else {
+    return axisFn(scale).ticks(nMax).tickFormat(withLabels ? fmt : "").tickSizeOuter(0);
+  }
 }
 
 function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, legend, getCur){
@@ -1254,12 +1272,11 @@ function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, 
   const yAxisScale = yScale.copy().range([panel.y+panel.h, panel.y]);
   const nx = panel.w < 380 ? 3 : 4;
   const ny = panel.h < 90 ? 3 : 4;
-  const fmt = d3.format(".2~g");
-  const xAxis = d3.axisBottom(xAxisScale).ticks(nx).tickFormat(panel.isLast ? fmt : "").tickSizeOuter(0);
+  const xAxis = makeAxis(d3.axisBottom, xAxisScale, nx, panel.isLast);
   if (!panel.isLast) xAxis.tickSize(3);
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${panel.y+panel.h})`).call(xAxis);
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${panel.x},0)`)
-    .call(d3.axisLeft(yAxisScale).ticks(ny).tickFormat(fmt).tickSizeOuter(0));
+    .call(makeAxis(d3.axisLeft, yAxisScale, ny, true));
   svg.append("text").attr("class","ax-title")
     .attr("transform",`translate(${panel.x-50},${panel.y+panel.h/2}) rotate(-90)`)
     .attr("text-anchor","middle").text(title);
