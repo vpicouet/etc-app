@@ -458,8 +458,23 @@ function simulateImage(p){
     if (SPECTRA_DATA && SPECTRA_DATA.atm && p.atm_kind && SPECTRA_DATA.atm[p.atm_kind]){
       const c = interpCurve(SPECTRA_DATA.atm[p.atm_kind], SPECTRA_DATA.grid, wavelengths);
       if (c){
-        for (let i=0;i<W;i++) atmCurve[i] = c[i];
-        used = true;
+        // Sanity check: if the baked atmosphere is effectively zero across the detector window
+        // (e.g. ground-based pwv_kpno sampled in the deep UV), fall back to a flat curve so the
+        // source doesn't disappear. The user can always toggle the flag off in Image options.
+        let mx = 0;
+        for (let i=0;i<W;i++) if (c[i]>mx) mx = c[i];
+        if (mx > 0.01){
+          for (let i=0;i<W;i++) atmCurve[i] = c[i];
+          used = true;
+        } else {
+          // Atm curve is ~0 in this λ window — skip it and use the scalar Atmosphere instead (handled downstream).
+          atmCurve.fill(1);
+          used = true;
+          if (typeof window !== "undefined" && window._etc_warned_atm !== true){
+            console.warn(`[etc] atm curve "${p.atm_kind}" is ~0 across [${wavelengths[0].toFixed(0)}..${wavelengths[W-1].toFixed(0)}] Å — using flat atm=1 for the spectral shape. Toggle "Atmospheric absorption" off to remove this fallback.`);
+            window._etc_warned_atm = true;
+          }
+        }
       }
     }
     if (!used){
@@ -555,15 +570,7 @@ function simulateImage(p){
       source[j*W + i] = spat * spectralProfile[i];
     }
   }
-  // DEBUG: log source amplitude on each simulation to diagnose visibility issues
-  if (typeof window !== "undefined" && window._etc_debug !== false){
-    const jC = Math.floor(H/2), iC = Math.floor(W/2);
-    const peakSrc = source[jC*W + iC];
-    const peakSpat = spatialProfile[jC];
-    const peakSlit = slitProfile[jC];
-    const peakSpec = spectralProfile[iC];
-    console.log(`[etc] Signal_in=${Signal.toExponential(2)} Signal_el_total=${Signal_el_total.toExponential(2)} amp=${amplitude.toExponential(2)} spat[c]=${peakSpat.toExponential(2)} slit[c]=${peakSlit.toExponential(2)} spec[c]=${peakSpec.toExponential(2)} source[c]=${peakSrc.toExponential(2)} normFactor=${normFactor.toFixed(2)} ff_slit=${flux_fraction.toExponential(2)}`);
-  }
+  // (debug log removed)
 
   // Sky: continuum + optional emission lines (baked sky_lines OR fallback random Gaussians).
   // IMPORTANT: sky is light that goes through the slit too — so it is GATED BY THE SLIT PROFILE
