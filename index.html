@@ -84,20 +84,20 @@
     border-bottom:none;border-radius:4px 4px 0 0;cursor:pointer;color:#444}
   .view-tab.active{background:#fff;color:var(--text);font-weight:600}
 
-  /* Spectro image view */
-  .img-view{flex-direction:column;gap:4px;padding:2px}
-  .img-row{display:flex;flex-direction:column;gap:6px;flex:0 0 auto}
+  /* Spectro image view: fixed proportion between imshow stack (55%) and analysis panels (45%) */
+  .img-view{flex-direction:column;gap:4px;padding:2px;min-height:0}
+  .img-row{display:flex;flex-direction:column;gap:6px;flex:0 0 55%;min-height:0}
   .img-cell{border:1px solid var(--line);border-radius:3px;background:#000;
-    position:relative;overflow:hidden;display:block;width:100%}
+    position:relative;overflow:hidden;display:block;width:100%;flex:1 1 0;min-height:0}
   .img-cell .cell-title{font-size:11px;color:#fff;background:rgba(0,0,0,0.55);
     padding:2px 6px;position:absolute;top:0;left:0;right:0;z-index:3}
-  .img-cell canvas{width:100%;height:auto;display:block;image-rendering:pixelated;position:relative;z-index:1;cursor:crosshair}
+  /* Canvas fills the cell, stretched in pixel-art mode — image aspect is not preserved (it's 500×100, very thin) */
+  .img-cell canvas{width:100%;height:100%;display:block;image-rendering:pixelated;position:relative;z-index:1;cursor:crosshair}
   .img-cell svg.overlay{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
-  /* 2×2 grid: left col = spatial profile (top) + histogram (bottom),
-     right col = spectral profile (top) + optics curves (bottom) */
-  .img-extra{flex:1 1 auto;min-height:0;display:grid;
+  /* 2×2 grid of analysis sub-plots: left col = spatial profile + histogram, right col = spectral profile + optics */
+  .img-extra{flex:1 1 45%;min-height:0;display:grid;
     grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px}
-  .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff;min-height:0}
+  .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff;min-height:0;min-width:0}
 
   /* Pixel hover tooltip */
   #pixtip{position:fixed;pointer-events:none;background:rgba(0,0,0,0.85);color:#fff;
