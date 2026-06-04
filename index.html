@@ -161,6 +161,11 @@
       <button id="reset" title="Reset all parameters to their default values (does not change the instrument).">↺</button>
     </div>
 
+    <details class="acc" id="dep-acc">
+      <summary>Parameter dependencies</summary>
+      <div class="acc-body" id="dep-list"></div>
+    </details>
+
     <div id="accordions"></div>
 
     <details class="sheet">
@@ -712,6 +717,33 @@ const GROUPS = ["Source","Strategy","Instrument","Spectrograph","Detector"];
 
 const FLAGS = { IFS:false, spectrograph:true, counting_mode:false };
 
+// Parameter coupling formulas — when active, the LHS is derived from the RHS and its slider is hidden.
+// Each entry: {key: target param, label: display, deps: [param names used], compute: (v)=>value}
+const DEPENDENCIES = [
+  {
+    key:"dispersion",
+    label:"dispersion = 10·λ / R / 2",
+    tip:"Lock dispersion to Nyquist sampling of the spectral resolution element. Changes in wavelength or R propagate automatically.",
+    deps:["wavelength","Spectral_resolution"],
+    compute:(v)=> 10*v.wavelength/v.Spectral_resolution/2
+  },
+  {
+    key:"pixel_scale",
+    label:"pixel_scale = 2.35·PSF_RMS_det / 2",
+    tip:"Lock pixel scale to half a spatial FWHM (Nyquist on the PSF).",
+    deps:["PSF_RMS_det"],
+    compute:(v)=> 2.35*v.PSF_RMS_det/2
+  },
+  {
+    key:"CIC_charge",
+    label:"CIC_charge = EM_gain / 2",
+    tip:"Lock CIC charge to half the EM gain (matches the dependency option from Observation.py — note this gives large CIC; use only if you want to mirror that exact behaviour).",
+    deps:["EM_gain"],
+    compute:(v)=> v.EM_gain/2
+  }
+];
+const ACTIVE_DEPS = new Set(); // currently selected dep keys
+
 const STATE = { instruments:null, current_instrument:null, values:{}, xKey:"exposure_time", view:"snr", imgSeed:1 };
 
 function defaultValueFor(p){ return p.log ? Math.pow(10, p.default_log) : p.default; }
@@ -822,6 +854,54 @@ function syncSlider(k){
   inp.value = p.log ? Math.log10(Math.max(v, Math.pow(10,p.min))) : v;
   const val = document.querySelector(`[data-val="${k}"]`);
   if (val) val.textContent = p.fmt(v);
+}
+
+/* Build dependencies UI + show/hide slider rows when a dep becomes active */
+function buildDependencyUI(){
+  const root = d3.select("#dep-list");
+  root.selectAll("*").remove();
+  DEPENDENCIES.forEach((d,idx)=>{
+    const row = root.append("label").attr("class","check").attr("title", d.tip).style("display","block").style("margin","2px 0");
+    row.append("input").attr("type","checkbox").attr("data-dep",d.key)
+      .property("checked", ACTIVE_DEPS.has(d.key))
+      .on("change", function(){
+        if (this.checked) ACTIVE_DEPS.add(d.key); else ACTIVE_DEPS.delete(d.key);
+        updateDepVisibility();
+        scheduleUpdate();
+      });
+    row.append("span").style("margin-left","4px").text(" "+d.label);
+  });
+}
+function updateDepVisibility(){
+  DEPENDENCIES.forEach(d=>{
+    const active = ACTIVE_DEPS.has(d.key);
+    const inp = document.querySelector(`input[data-key="${d.key}"]`);
+    if (!inp) return;
+    const row = inp.closest(".slider-row");
+    if (row) row.style.display = active ? "none" : "";
+  });
+}
+/* Apply active dependencies to a scalar param map (mutates in place) */
+function applyDependenciesScalar(values){
+  // Iterate in declaration order; cascading deps would need topo sort but the three formulas here don't chain.
+  DEPENDENCIES.forEach(d=>{
+    if (!ACTIVE_DEPS.has(d.key)) return;
+    const ok = d.deps.every(name => isFinite(values[name]));
+    if (ok) values[d.key] = d.compute(values);
+  });
+}
+/* Vector version: arrays for the x-axis are honored. */
+function applyDependenciesVector(map, N){
+  DEPENDENCIES.forEach(d=>{
+    if (!ACTIVE_DEPS.has(d.key)) return;
+    const arr = new Array(N);
+    for (let i=0;i<N;i++){
+      const ctx = {};
+      for (const nm of d.deps) ctx[nm] = Array.isArray(map[nm]) ? map[nm][i] : map[nm];
+      arr[i] = d.compute(ctx);
+    }
+    map[d.key] = arr;
+  });
 }
 
 /* ============================================================================
@@ -1078,7 +1158,8 @@ function drawImageView(){
   // Build the parameter set as scalars
   const pa = {};
   for (const k of Object.keys(PARAMS)) pa[k] = STATE.values[k];
-  pa.Signal_in = STATE.values.Signal;
+  applyDependenciesScalar(pa);
+  pa.Signal_in = pa.Signal;
   pa.IFS = FLAGS.IFS; pa.spectrograph = FLAGS.spectrograph; pa.counting_mode = FLAGS.counting_mode;
   // Detector image size (kept fixed; you can change to scale with viewport)
   pa.W = 500; pa.H = 100;
@@ -1225,6 +1306,8 @@ function doUpdate(){
   pa.xArr = xArr;
   pa.IFS = FLAGS.IFS; pa.spectrograph = FLAGS.spectrograph; pa.counting_mode = FLAGS.counting_mode;
   pa.SNR_res = document.getElementById("snr_res").value;
+  // Apply parameter coupling: a dependent param overrides its scalar/array value
+  applyDependenciesVector(pa, N);
   let res;
   try { res = computeObservation(pa); }
   catch(e){ d3.select("#status").classed("err",true).text("Compute error: "+e.message); console.error(e); return; }
@@ -1268,6 +1351,8 @@ function buildInstrumentOptions(){
 async function main(){
   initValuesToDefault();
   buildUI();
+  buildDependencyUI();
+  updateDepVisibility();
   buildXAxisOptions();
   try {
     await loadInstruments(document.getElementById("sheet_id").value, document.getElementById("sheet_name").value);
