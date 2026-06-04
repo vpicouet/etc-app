@@ -110,17 +110,17 @@
 
   <div id="controls">
     <div class="topbar">
-      <label class="kv">Instrument <select id="instrument"></select></label>
-      <label class="kv">X axis <select id="xaxis"></select></label>
-      <label class="kv">SNR <select id="snr_res">
-        <option>per pix</option>
-        <option selected>per Res elem</option>
-        <option>per Source</option>
-        <option>per Source per 2λpix</option>
+      <label class="kv" title="Pick an instrument from the shared spreadsheet. Loads all its parameters into the sliders.">Instrument <select id="instrument"></select></label>
+      <label class="kv" title="Choose which parameter to vary along the x-axis. All other parameters are held fixed.">X axis <select id="xaxis"></select></label>
+      <label class="kv" title="SNR mode: per pixel, per resolution element, per source, or per source × 2 spectral pixels (IFS).">SNR <select id="snr_res">
+        <option title="SNR computed over a single pixel.">per pix</option>
+        <option selected title="SNR computed over one resolution element (default).">per Res elem</option>
+        <option title="SNR computed over all pixels covered by the source.">per Source</option>
+        <option title="IFS mode: integrate over the source × 2 adaptive spectral pixels (KCWI-like).">per Source per 2λpix</option>
       </select></label>
-      <label class="check"><input type="checkbox" id="xlog" checked> xlog</label>
-      <label class="check"><input type="checkbox" id="ylog"> ylog</label>
-      <button id="reset" title="Reset all parameters to defaults">↺</button>
+      <label class="check" title="Use a logarithmic x-axis."><input type="checkbox" id="xlog" checked> xlog</label>
+      <label class="check" title="Use a logarithmic y-axis for noise and contribution panels."><input type="checkbox" id="ylog"> ylog</label>
+      <button id="reset" title="Reset all parameters to their default values (does not change the instrument).">↺</button>
     </div>
 
     <div id="accordions"></div>
@@ -367,38 +367,38 @@ function computeObservation(p){
    3. PARAMETERS — grouped into accordions (NO "Image" group)
    ========================================================================== */
 const PARAMS = {
-  Signal:       {tab:"Source", label:"Source", unit:"erg/cm²/s/asec²/Å", min:-21, max:-9, step:0.1, log:true, default_log:-17, fmt:e=>e.toExponential(2), xable:true},
-  Size_source:  {tab:"Source", label:"σ source", unit:"\"", min:0.01, max:100, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
-  Sky:          {tab:"Source", label:"Sky", unit:"erg/cm²/s/asec²/Å", min:-23, max:-15, step:0.1, log:true, default_log:-18, fmt:e=>e.toExponential(2), xable:true},
-  Line_width:   {tab:"Source", label:"Eq width", unit:"Å", min:0.01, max:100, step:0.1, log:false, default:6, fmt:v=>v.toFixed(2), xable:true},
+  Signal:       {tab:"Source", label:"Source", unit:"erg/cm²/s/asec²/Å", min:-21, max:-9, step:0.1, log:true, default_log:-17, fmt:e=>e.toExponential(2), xable:true, tip:"Surface brightness of the diffuse source in erg/cm²/s/arcsec²/Å. Values >1 are interpreted as UV magnitudes and converted to flux."},
+  Size_source:  {tab:"Source", label:"σ source", unit:"\"", min:0.01, max:100, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial extension of the source (sigma) in arcseconds. Affects the number of pixels integrated over and aperture losses."},
+  Sky:          {tab:"Source", label:"Sky", unit:"erg/cm²/s/asec²/Å", min:-23, max:-15, step:0.1, log:true, default_log:-18, fmt:e=>e.toExponential(2), xable:true, tip:"Sky background illumination (zodiacal + galactic) in erg/cm²/s/arcsec²/Å."},
+  Line_width:   {tab:"Source", label:"Eq width", unit:"Å", min:0.01, max:100, step:0.1, log:false, default:6, fmt:v=>v.toFixed(2), xable:true, tip:"Spectral extension of the source / emission line in Å. Used to compute the spectral integration."},
 
-  Atmosphere:        {tab:"Strategy", label:"Atmosphere", unit:"", min:0.1, max:1, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
-  acquisition_time:  {tab:"Strategy", label:"Taq", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true},
-  readout_time:      {tab:"Strategy", label:"Readout time", unit:"s", min:0, max:300, step:1, log:false, default:0, fmt:v=>v.toFixed(0), xable:true},
-  exposure_time:     {tab:"Strategy", label:"Exposure time", unit:"s", min:1, max:3005, step:1, log:false, default:50, fmt:v=>v.toFixed(0), xable:true},
-  wavelength:        {tab:"Strategy", label:"Observed λ", unit:"nm", min:50, max:1000, step:0.1, log:false, default:200, fmt:v=>v.toFixed(1), xable:true},
-  lambda_stack:      {tab:"Strategy", label:"λ Stack", unit:"pix", min:1, max:200, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true},
+  Atmosphere:        {tab:"Strategy", label:"Atmosphere", unit:"", min:0.1, max:1, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Atmospheric transmission (0–1). Affects signal but not detector noise."},
+  acquisition_time:  {tab:"Strategy", label:"Taq", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Total acquisition time [hours]. Divided by (exposure + readout) gives the number of frames."},
+  readout_time:      {tab:"Strategy", label:"Readout time", unit:"s", min:0, max:300, step:1, log:false, default:0, fmt:v=>v.toFixed(0), xable:true, tip:"Detector readout time between exposures [seconds]. Use 0 for MCPs or rolling shutters."},
+  exposure_time:     {tab:"Strategy", label:"Exposure time", unit:"s", min:1, max:3005, step:1, log:false, default:50, fmt:v=>v.toFixed(0), xable:true, tip:"Individual frame exposure time [seconds]."},
+  wavelength:        {tab:"Strategy", label:"Observed λ", unit:"nm", min:50, max:1000, step:0.1, log:false, default:200, fmt:v=>v.toFixed(1), xable:true, tip:"Observed wavelength in nm. Used for flux/photon conversion (drives the photon energy)."},
+  lambda_stack:      {tab:"Strategy", label:"λ Stack", unit:"pix", min:1, max:200, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true, tip:"Number of spectral slices stacked (only used in imager mode). Forced to 1 for spectrographs."},
 
-  Collecting_area: {tab:"Instrument", label:"Area", unit:"m²", min:-2, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true},
-  pixel_scale:     {tab:"Instrument", label:"Pixel scale", unit:"\"/pix", min:0.01, max:5, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
-  Throughput:      {tab:"Instrument", label:"Throughput", unit:"", min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>v.toFixed(2), xable:true},
-  PSF_RMS_mask:    {tab:"Instrument", label:"Mask σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
-  PSF_RMS_det:     {tab:"Instrument", label:"Det σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
-  Throughput_FWHM: {tab:"Instrument", label:"TH FWHM (imager)", unit:"Å", min:1, max:5, step:0.01, log:true, default_log:2, fmt:v=>v.toFixed(2), xable:false},
+  Collecting_area: {tab:"Instrument", label:"Area", unit:"m²", min:-2, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Physical collecting area of the instrument in m²."},
+  pixel_scale:     {tab:"Instrument", label:"Pixel scale", unit:"\"/pix", min:0.01, max:5, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Pixel plate scale in arcseconds per pixel."},
+  Throughput:      {tab:"Instrument", label:"Throughput", unit:"", min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>v.toFixed(2), xable:true, tip:"Instrument throughput at the effective wavelength (excludes detector QE and atmosphere)."},
+  PSF_RMS_mask:    {tab:"Instrument", label:"Mask σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial PSF RMS (sigma) at the slit/mask, in arcseconds. Multiply by 2.35 to get the FWHM. Drives slit losses."},
+  PSF_RMS_det:     {tab:"Instrument", label:"Det σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial PSF RMS (sigma) at the detector, in arcseconds. Drives the resolution element size."},
+  Throughput_FWHM: {tab:"Instrument", label:"TH FWHM (imager)", unit:"Å", min:1, max:5, step:0.01, log:true, default_log:2, fmt:v=>v.toFixed(2), xable:false, tip:"Instrument throughput FWHM in Å (imager mode only). If a per-instrument λ-dependent throughput exists, it is used instead."},
 
-  Spectral_resolution: {tab:"Spectrograph", label:"R = λ/Δλ", unit:"", min:90, max:10000, step:1, log:false, default:1000, fmt:v=>v.toFixed(0), xable:true},
-  Slitwidth:           {tab:"Spectrograph", label:"Slit width", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true},
-  Slitlength:          {tab:"Spectrograph", label:"Slit length", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true},
-  dispersion:          {tab:"Spectrograph", label:"Dispersion", unit:"Å/pix", min:0.01, max:5, step:0.001, log:false, default:0.5, fmt:v=>v.toFixed(3), xable:true},
-  Bandwidth:           {tab:"Spectrograph", label:"Bandwidth", unit:"Å", min:1, max:5000, step:1, log:false, default:200, fmt:v=>v.toFixed(0), xable:true},
+  Spectral_resolution: {tab:"Spectrograph", label:"R = λ/Δλ", unit:"", min:90, max:10000, step:1, log:false, default:1000, fmt:v=>v.toFixed(0), xable:true, tip:"Spectral resolution R = λ/Δλ."},
+  Slitwidth:           {tab:"Spectrograph", label:"Slit width", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true, tip:"Width of the slit / slicer / fiber in arcseconds. Same value as length for a circular fiber."},
+  Slitlength:          {tab:"Spectrograph", label:"Slit length", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true, tip:"Length of the slit / slicer / fiber in arcseconds. Same value as width for a circular fiber."},
+  dispersion:          {tab:"Spectrograph", label:"Dispersion", unit:"Å/pix", min:0.01, max:5, step:0.001, log:false, default:0.5, fmt:v=>v.toFixed(3), xable:true, tip:"Dispersion at the detector in Å per pixel."},
+  Bandwidth:           {tab:"Spectrograph", label:"Bandwidth", unit:"Å", min:1, max:5000, step:1, log:false, default:200, fmt:v=>v.toFixed(0), xable:true, tip:"Total spectrograph bandwidth in Å."},
 
-  QE:                      {tab:"Detector", label:"QE", unit:"", min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>v.toFixed(2), xable:true},
-  RN:                      {tab:"Detector", label:"Read noise", unit:"e-/pix", min:0.01, max:120, step:0.1, log:false, default:2, fmt:v=>v.toFixed(2), xable:true},
-  Dark_current:            {tab:"Detector", label:"Dark current", unit:"e-/pix/h", min:0, max:50, step:0.001, log:false, default:0.1, fmt:v=>v.toFixed(3), xable:true},
-  extra_background:        {tab:"Detector", label:"Extra background", unit:"e-/pix/h", min:0, max:200, step:0.1, log:false, default:0, fmt:v=>v.toFixed(2), xable:true},
-  cosmic_ray_loss_per_sec: {tab:"Detector", label:"CR loss", unit:"/s", min:0, max:0.1, step:0.0001, log:false, default:0, fmt:v=>v.toFixed(4), xable:true},
-  EM_gain:                 {tab:"Detector", label:"EM gain", unit:"e-/e-", min:1, max:3500, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true},
-  CIC_charge:              {tab:"Detector", label:"CIC charge", unit:"e-/pix", min:0, max:0.07, step:0.001, log:false, default:0.001, fmt:v=>v.toFixed(4), xable:true},
+  QE:                      {tab:"Detector", label:"QE", unit:"", min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>v.toFixed(2), xable:true, tip:"Detector quantum efficiency (0–1)."},
+  RN:                      {tab:"Detector", label:"Read noise", unit:"e-/pix", min:0.01, max:120, step:0.1, log:false, default:2, fmt:v=>v.toFixed(2), xable:true, tip:"Detector read noise in electrons/pixel/frame. For EMCCDs this is the raw RN before EM-gain division."},
+  Dark_current:            {tab:"Detector", label:"Dark current", unit:"e-/pix/h", min:0, max:50, step:0.001, log:false, default:0.1, fmt:v=>v.toFixed(3), xable:true, tip:"Detector dark current in electrons/pixel/hour."},
+  extra_background:        {tab:"Detector", label:"Extra background", unit:"e-/pix/h", min:0, max:200, step:0.1, log:false, default:0, fmt:v=>v.toFixed(2), xable:true, tip:"Additional background on the detector (straylight, leaks…) in electrons/pixel/hour."},
+  cosmic_ray_loss_per_sec: {tab:"Detector", label:"CR loss", unit:"/s", min:0, max:0.1, step:0.0001, log:false, default:0, fmt:v=>v.toFixed(4), xable:true, tip:"Fraction of pixels lost per second due to cosmic-ray impacts. E.g. 0.01 means a 1s frame loses 1% of pixels."},
+  EM_gain:                 {tab:"Detector", label:"EM gain", unit:"e-/e-", min:1, max:3500, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true, tip:"EMCCD amplification gain (e-/e-). Set to 1 for non-EMCCD detectors."},
+  CIC_charge:              {tab:"Detector", label:"CIC charge", unit:"e-/pix", min:0, max:0.07, step:0.001, log:false, default:0.001, fmt:v=>v.toFixed(4), xable:true, tip:"Clock-induced charges per pixel per frame (EMCCD spurious charges from the amplification register)."},
 };
 const GROUPS = ["Source","Strategy","Instrument","Spectrograph","Detector"];
 
@@ -462,11 +462,13 @@ function buildUI(){
     for (const [k,p] of Object.entries(PARAMS)){
       if (p.tab!==group) continue;
       const row = body.append("div").attr("class","slider-row");
-      row.append("label").text(p.label + (p.unit?` [${p.unit}]`:""));
+      const tipText = `${k}${p.unit?` [${p.unit}]`:""}${p.tip?`\n\n${p.tip}`:""}`;
+      row.append("label").attr("title", tipText).text(p.label + (p.unit?` [${p.unit}]`:""));
       const v = STATE.values[k];
       const sliderVal = p.log ? Math.log10(Math.max(v, Math.pow(10,p.min))) : v;
       const step = p.log ? (p.step||0.05) : p.step;
       const inp = row.append("input").attr("type","range").attr("data-key",k)
+        .attr("title", tipText)
         .attr("min", p.min).attr("max", p.max).attr("step", step).attr("value", sliderVal);
       const val = row.append("div").attr("class","val").attr("data-val",k).text(p.fmt(v));
       inp.on("input", function(){
@@ -478,14 +480,14 @@ function buildUI(){
     }
     if (group==="Spectrograph"){
       const r = body.append("div").attr("class","flags-row");
-      r.append("label").attr("class","check").html('<input type="checkbox" id="flag_IFS"> IFS');
-      r.append("label").attr("class","check").html('<input type="checkbox" id="flag_spectro" checked> Spectrograph');
+      r.append("label").attr("class","check").attr("title","Integral Field Spectrograph: the flux normally lost by the slit/fiber is transferred to neighbouring slices/fibres (no slit-width losses).").html('<input type="checkbox" id="flag_IFS"> IFS');
+      r.append("label").attr("class","check").attr("title","Spectrograph mode (has a dispersive element). Uncheck for imager mode.").html('<input type="checkbox" id="flag_spectro" checked> Spectrograph');
       document.getElementById("flag_IFS").addEventListener("change",function(){FLAGS.IFS=this.checked;scheduleUpdate();});
       document.getElementById("flag_spectro").addEventListener("change",function(){FLAGS.spectrograph=this.checked;scheduleUpdate();});
     }
     if (group==="Detector"){
       const r = body.append("div").attr("class","flags-row");
-      r.append("label").attr("class","check").html('<input type="checkbox" id="flag_counting"> γ-Threshold (photon counting)');
+      r.append("label").attr("class","check").attr("title","EMCCD photon-counting / thresholding mode: sets ENF=1 instead of √2 (assumes optimal threshold).").html('<input type="checkbox" id="flag_counting"> γ-Threshold (photon counting)');
       document.getElementById("flag_counting").addEventListener("change",function(){FLAGS.counting_mode=this.checked;scheduleUpdate();});
     }
   });
