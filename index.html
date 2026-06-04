@@ -557,8 +557,12 @@ function simulateImage(p){
   }
   // DEBUG: log source amplitude on each simulation to diagnose visibility issues
   if (typeof window !== "undefined" && window._etc_debug !== false){
-    const peakSrc = source[Math.floor(H/2)*W + Math.floor(W/2)];
-    console.log(`[etc] Signal_in=${Signal.toExponential(2)} → Signal_el_total=${Signal_el_total.toExponential(2)} → source peak=${peakSrc.toExponential(2)} e-  (PSF_x=${PSF_x.toFixed(2)} px, PSF_lam=${PSF_lam.toFixed(2)} px, normFactor=${normFactor.toFixed(2)})`);
+    const jC = Math.floor(H/2), iC = Math.floor(W/2);
+    const peakSrc = source[jC*W + iC];
+    const peakSpat = spatialProfile[jC];
+    const peakSlit = slitProfile[jC];
+    const peakSpec = spectralProfile[iC];
+    console.log(`[etc] Signal_in=${Signal.toExponential(2)} Signal_el_total=${Signal_el_total.toExponential(2)} amp=${amplitude.toExponential(2)} spat[c]=${peakSpat.toExponential(2)} slit[c]=${peakSlit.toExponential(2)} spec[c]=${peakSpec.toExponential(2)} source[c]=${peakSrc.toExponential(2)} normFactor=${normFactor.toFixed(2)} ff_slit=${flux_fraction.toExponential(2)}`);
   }
 
   // Sky: continuum + optional emission lines (baked sky_lines OR fallback random Gaussians).
