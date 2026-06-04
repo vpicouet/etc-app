@@ -79,7 +79,9 @@
   .plot-axis text{font-size:10px;fill:#333}
   .plot-axis path,.plot-axis line{stroke:#888;shape-rendering:crispEdges}
   .legend{font-size:10.5px;fill:#222}
-  .vline{stroke:#000;stroke-width:1.2;stroke-dasharray:3,3;pointer-events:none}
+  .vline{stroke:#000;stroke-width:1.4;stroke-dasharray:3,3;pointer-events:none}
+  .vline-hit{cursor:ew-resize}
+  .vline-hit:hover ~ .vline, .vline-hit:hover + .vline{stroke:#E24A33;stroke-width:1.8}
   .ax-title{font-size:11px;fill:#222;font-weight:600}
 
   /* View tabs (SNR / Spectro image) */
@@ -1283,11 +1285,24 @@ function drawPlot(res){
   svg.append("text").attr("x", panels[0].x + panels[0].w/2).attr("y", dim.h-6)
     .attr("text-anchor","middle").attr("class","ax-title").text(xKey);
 
-  // current-value vertical line
+  // current-value vertical line (DRAGGABLE: dragging it updates STATE.values[xKey] and re-renders)
   if (currentVal!=null && currentVal>=xmin && currentVal<=xmax){
     const xp = xScale(currentVal);
     panels.forEach(pr=>{
-      svg.append("line").attr("class","vline").attr("x1", pr.x + xp*pr.w).attr("x2", pr.x + xp*pr.w).attr("y1", pr.y).attr("y2", pr.y+pr.h);
+      const lineX = pr.x + xp*pr.w;
+      // Wide invisible hit area for easy grabbing (12 SVG units total)
+      svg.append("rect").attr("class","vline-hit")
+        .attr("x", lineX - 6).attr("y", pr.y).attr("width", 12).attr("height", pr.h)
+        .attr("fill", "transparent").style("cursor","ew-resize")
+        .on("mousedown", function(e){
+          if (e.button !== 0 || e.ctrlKey) return;
+          e.preventDefault(); e.stopPropagation();
+          STATE._snrXDrag = { panel: pr, xScale, dim, dragging: true };
+        });
+      // Visible vertical line
+      svg.append("line").attr("class","vline")
+        .attr("x1", lineX).attr("x2", lineX).attr("y1", pr.y).attr("y2", pr.y+pr.h)
+        .style("pointer-events","none");
     });
   }
 
@@ -2300,6 +2315,46 @@ function drawIfsSpectrum(){
 }
 
 /* Global drag handlers for the λ cursor — bound once. */
+/* Global drag handler for the SNR plot's vertical "current value" cursor.
+   Dragging it updates STATE.values[STATE.xKey] (clamped to the parameter's slider range),
+   syncs the slider, and re-renders the SNR view. */
+function attachSnrXDrag(){
+  if (STATE._snrXDragAttached) return;
+  STATE._snrXDragAttached = true;
+  const svgNode = document.getElementById("plot");
+  window.addEventListener("mousemove", e => {
+    const d = STATE._snrXDrag;
+    if (!d || !d.dragging) return;
+    const rect = svgNode.getBoundingClientRect();
+    // SVG viewBox uses dim.w units across the full rect; map clientX → svgX in viewBox coords
+    const svgX = (e.clientX - rect.left) * (d.dim.w / rect.width);
+    const fx = (svgX - d.panel.x) / d.panel.w;
+    if (!isFinite(fx)) return;
+    const clamped = Math.max(0, Math.min(1, fx));
+    let xVal;
+    try { xVal = d.xScale.invert(clamped); }
+    catch(err){ return; }
+    if (!isFinite(xVal)) return;
+    // Clamp to parameter range (slider min/max)
+    const xKey = STATE.xKey;
+    const p = PARAMS[xKey];
+    if (!p) return;
+    const vmin = p.log ? Math.pow(10, p.min) : p.min;
+    const vmax = p.log ? Math.pow(10, p.max) : p.max;
+    xVal = Math.max(vmin, Math.min(vmax, xVal));
+    STATE.values[xKey] = xVal;
+    syncSlider(xKey);
+    if (!STATE._snrXPending){
+      STATE._snrXPending = true;
+      requestAnimationFrame(()=>{
+        STATE._snrXPending = false;
+        doUpdate();
+      });
+    }
+  });
+  window.addEventListener("mouseup", ()=> { if (STATE._snrXDrag) STATE._snrXDrag.dragging = false; });
+}
+
 function attachIfsLambdaDrag(){
   if (STATE._ifsLambdaDragAttached) return;
   STATE._ifsLambdaDragAttached = true;
@@ -2439,7 +2494,7 @@ function doUpdate(){
     .text(`Instrument: ${STATE.current_instrument||"—"}   |   x = ${xKey}   |   SNR = ${res.SNR[iCur].toFixed(2)}`);
   document.getElementById("meta").textContent = STATE.current_instrument
     ? `${STATE.current_instrument} • SNR ${res.SNR[iCur].toFixed(2)}` : "";
-  if (STATE.view === "snr") drawPlot(res);
+  if (STATE.view === "snr") { drawPlot(res); attachSnrXDrag(); }
   else if (STATE.view === "ifs") { drawIfsView(); attachIfsRectDrag(); attachIfsLambdaDrag(); }
   else drawImageView();
 }
