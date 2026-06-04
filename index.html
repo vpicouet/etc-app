@@ -93,7 +93,7 @@
     padding:2px 6px;position:absolute;top:0;left:0;right:0;z-index:3}
   .img-cell canvas{width:100%;height:auto;display:block;image-rendering:pixelated;position:relative;z-index:1}
   .img-cell svg.overlay{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
-  .img-extra{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .img-extra{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
   .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff}
 
   /* Pixel hover tooltip */
@@ -156,6 +156,7 @@
         </div>
         <div class="img-extra">
           <svg id="svg-profiles"></svg>
+          <svg id="svg-optics"></svg>
           <svg id="svg-hist"></svg>
         </div>
       </div>
@@ -303,6 +304,24 @@ function gauss1d(x, x0, sigma){
 }
 function erf01(x){return 0.5*(1+erf(x))}
 
+/* Interpolate a baked curve {min_nm, max_nm, n, values:[...]} onto a target wavelength array (Å). */
+function interpCurve(values, gridSpec, targetAngstroms){
+  if (!values || !values.length) return null;
+  const out = new Float64Array(targetAngstroms.length);
+  const minNm = gridSpec.min_nm, maxNm = gridSpec.max_nm, n = values.length;
+  const dnm = (maxNm - minNm) / (n - 1);
+  for (let i=0; i<targetAngstroms.length; i++){
+    const nm = targetAngstroms[i] / 10;
+    if (nm < minNm || nm > maxNm){ out[i] = 0; continue; }
+    const f = (nm - minNm) / dnm;
+    const i0 = Math.floor(f);
+    const i1 = Math.min(n-1, i0+1);
+    const t = f - i0;
+    out[i] = values[i0]*(1-t) + values[i1]*t;
+  }
+  return out;
+}
+
 function simulateImage(p){
   // Use scalar parameters from STATE.values + FLAGS
   const W = p.W || 500, H = p.H || 100;          // detector size (W = spectral, H = spatial)
@@ -392,9 +411,7 @@ function simulateImage(p){
   const wavelengths = new Float64Array(W);
   for (let i=0;i<W;i++) wavelengths[i] = wave_min + (wave_max-wave_min)*i/(W-1);
 
-  // Throughput(λ) Gaussian shape (relative, normalised to peak)
-  // (constants used: peak=1 at wavelength*10 Å, FWHM = Throughput_FWHM Å)
-  // sigma_TH = Throughput_FWHM / 2.35
+  // Throughput(λ): try baked instrument throughput; else Gaussian; else flat.
   const thSigma = Throughput_FWHM / 2.35;
   const throughputCurve = new Float64Array(W);
   if (opt_QElambda){
@@ -403,27 +420,51 @@ function simulateImage(p){
     throughputCurve.fill(1);
   }
 
-  // Atmosphere curve — placeholder λ-dependence: gentle drop at the band edges.
-  // (Full pwv_kpno curve is not bundled in this web port — see Info page.)
+  // Atmosphere curve — use baked transmission if available; otherwise mild raised-cosine placeholder.
   const atmCurve = new Float64Array(W);
   if (opt_atmlambda){
-    // Smooth raised cosine across the band, with depth 0.15
-    for (let i=0;i<W;i++){
-      const t = (wavelengths[i] - wavelengths[0]) / (wavelengths[W-1] - wavelengths[0] || 1);
-      atmCurve[i] = 1 - 0.15*(1 - Math.cos(2*Math.PI*t))/2;
+    let used = false;
+    if (SPECTRA_DATA && SPECTRA_DATA.atm && p.atm_kind && SPECTRA_DATA.atm[p.atm_kind]){
+      const c = interpCurve(SPECTRA_DATA.atm[p.atm_kind], SPECTRA_DATA.grid, wavelengths);
+      if (c){
+        for (let i=0;i<W;i++) atmCurve[i] = c[i];
+        used = true;
+      }
+    }
+    if (!used){
+      for (let i=0;i<W;i++){
+        const t = (wavelengths[i] - wavelengths[0]) / (wavelengths[W-1] - wavelengths[0] || 1);
+        atmCurve[i] = 1 - 0.15*(1 - Math.cos(2*Math.PI*t))/2;
+      }
     }
   } else {
     atmCurve.fill(1);
   }
 
-  // Spectral profile of the emission line: Gaussian centred mid-W, sigma = PSF_lam
+  // Spectral profile of the source — either:
+  //   - "Baseline emission line": Gaussian centred mid-W, sigma = PSF_lam (original behaviour), OR
+  //   - a baked spectrum (continuum SED): interpolate it on the detector wavelengths
   const spectralProfile = new Float64Array(W);
   let spSum = 0;
-  for (let i=0;i<W;i++){ spectralProfile[i] = gauss1d(i, W/2, PSF_lam); spSum += spectralProfile[i]; }
+  const wantedSpec = p.spectrum || "Baseline emission line";
+  if (wantedSpec === "Baseline emission line" || !SPECTRA_DATA || !SPECTRA_DATA.spectra[wantedSpec]){
+    for (let i=0;i<W;i++){ spectralProfile[i] = gauss1d(i, W/2, PSF_lam); spSum += spectralProfile[i]; }
+  } else {
+    // Redshift the source frame to the observed frame
+    const redshift = (typeof p.Redshift==="number") ? p.Redshift : 0;
+    const observedRest = new Float64Array(W);
+    for (let i=0;i<W;i++) observedRest[i] = wavelengths[i] / (1 + redshift);
+    const fluxRest = interpCurve(SPECTRA_DATA.spectra[wantedSpec], SPECTRA_DATA.grid, observedRest);
+    // SED uses the same units everywhere — we normalise to peak=1 so the user controls amplitude via the Signal slider.
+    let pk = 0; for (let i=0;i<W;i++) if (fluxRest[i]>pk) pk = fluxRest[i];
+    if (!(pk>0)) pk = 1;
+    for (let i=0;i<W;i++){ spectralProfile[i] = fluxRest[i]/pk; spSum += spectralProfile[i]; }
+  }
   // Apply throughput × atm
   for (let i=0;i<W;i++) spectralProfile[i] *= throughputCurve[i]*atmCurve[i];
-  // Normalise so the integral over the spectral axis equals Signal_el_total (then it spreads spatially next)
-  if (spSum > 0) for (let i=0;i<W;i++) spectralProfile[i] *= 1/spSum;
+  // Normalise so that the integral over the spectral axis is 1 (the spatial distribution then carries Signal_el_total)
+  let spInt = 0; for (let i=0;i<W;i++) spInt += spectralProfile[i];
+  if (spInt > 0) for (let i=0;i<W;i++) spectralProfile[i] *= 1/spInt;
 
   // Spatial profile: Gaussian sigma PSF_x, centred mid-H, ×slit profile (erf gate of half-length = Slitlength/2/pixel_scale around H/2)
   const spatialProfile = new Float64Array(H);
@@ -463,34 +504,67 @@ function simulateImage(p){
     }
   }
 
-  // Sky: scalar per pixel per exposure, optionally modulated with a few random emission lines.
-  // We build a per-column multiplier (length W) that is 1 by default, with Gaussian-shaped bumps.
-  const sky_rate = sky_e_per_pix_per_exp;        // e-/pix/exp (continuum baseline)
+  // Sky: continuum + optional emission lines (baked sky_lines OR fallback random Gaussians).
+  // IMPORTANT: sky is light that goes through the slit too — so it is GATED BY THE SLIT PROFILE
+  // on the spatial axis (just like the source). Outside the slit, no sky.
+  const sky_rate = sky_e_per_pix_per_exp;        // e-/pix/exp continuum baseline (inside slit)
   const dark_rate = dark_per_pix_per_exp;
   const extra_rate = extra_per_pix_per_exp;
+
+  // Per-column sky multiplier from baked sky-line spectrum
   let skyLineMult = null;
   if (opt_skylines){
     skyLineMult = new Float64Array(W); skyLineMult.fill(1);
-    // ~6 sky lines randomly placed (deterministic given the seed)
-    const rngLines = makeRng(seed^0xBEEF);
-    const nLines = 6;
-    for (let l=0;l<nLines;l++){
-      const i0 = Math.floor(rngLines()*W);
-      const sigma = 1.0 + rngLines()*1.5;   // px
-      const amp = 4 + rngLines()*8;          // multiplier at line peak
-      for (let i=0;i<W;i++){
-        skyLineMult[i] += (amp-1) * gauss1d(i, i0, sigma);
+    let used = false;
+    if (SPECTRA_DATA && SPECTRA_DATA.sky_lines && p.sky_kind && SPECTRA_DATA.sky_lines[p.sky_kind]){
+      // sky_lines stored on the finer sky_grid
+      const skyCurve = interpCurve(SPECTRA_DATA.sky_lines[p.sky_kind], SPECTRA_DATA.sky_grid, wavelengths);
+      if (skyCurve){
+        // Convolve mildly with the spectral PSF
+        const sigmaPix = Math.max(0.7, PSF_lam);
+        const k = Math.max(2, Math.ceil(sigmaPix*3));
+        const conv = new Float64Array(W);
+        for (let i=0;i<W;i++){
+          let s = 0, n = 0;
+          for (let d=-k; d<=k; d++){
+            const j = i+d; if (j<0||j>=W) continue;
+            const w = gauss1d(d, 0, sigmaPix);
+            s += skyCurve[j]*w; n += w;
+          }
+          conv[i] = n>0 ? s/n : 0;
+        }
+        // Normalise so the peak is "amp×" continuum
+        let pk = 0; for (let i=0;i<W;i++) if (conv[i]>pk) pk = conv[i];
+        if (pk > 0){
+          const amp = 10;
+          for (let i=0;i<W;i++) skyLineMult[i] = 1 + (amp-1)*conv[i]/pk;
+          used = true;
+        }
+      }
+    }
+    if (!used){
+      // Fallback: 6 random Gaussian sky lines (deterministic given seed)
+      const rngLines = makeRng(seed^0xBEEF);
+      for (let l=0;l<6;l++){
+        const i0 = Math.floor(rngLines()*W);
+        const sigma = 1.0 + rngLines()*1.5;
+        const amp = 4 + rngLines()*8;
+        for (let i=0;i<W;i++) skyLineMult[i] += (amp-1)*gauss1d(i, i0, sigma);
       }
     }
   }
+
+  // sky multiplier value at a column
+  function skyAt(col){ return skyLineMult ? sky_rate*skyLineMult[col] : sky_rate; }
+
+  // Spatial gate: sky only present inside the slit. Dark + extra-background are everywhere
+  // (they originate at the detector, not from the sky).
+  function skyAtRow(col, j){ return skyAt(col) * slitProfile[j]; }
 
   // ---- Build single + stacked images depending on the requested display mode
   const single = new Float64Array(W*H);
   const stack = new Float64Array(W*H);
   const Nst = N_stack;
-
-  // Sky per-pixel-per-frame as a column-dependent multiplier (sky lines)
-  function skyAt(col){ return skyLineMult ? sky_rate*skyLineMult[col] : sky_rate; }
 
   if (mode === "Source" || mode === "Convolved source"){
     // Display the noise-free source image (e-/exp), with or without convolution / slit losses already applied (we always apply slit profile above).
@@ -500,7 +574,7 @@ function simulateImage(p){
     for (let j=0;j<H;j++){
       for (let i=0;i<W;i++){
         const s = source[j*W+i];
-        const bg = skyAt(i) + dark_rate + extra_rate;
+        const bg = skyAtRow(i, j) + dark_rate + extra_rate;
         const noise2 = s + bg + RN*RN;
         const snr1 = noise2>0 ? s/Math.sqrt(noise2) : 0;
         single[j*W+i] = snr1;
@@ -510,9 +584,8 @@ function simulateImage(p){
   } else {
     // "Sim image" — full Poisson + EMCCD + RN realisation
     for (let j=0;j<H;j++){
-      const skyCol = skyAt;
       for (let i=0;i<W;i++){
-        const lam1 = source[j*W+i] + skyCol(i) + dark_rate + extra_rate;
+        const lam1 = source[j*W+i] + skyAtRow(i, j) + dark_rate + extra_rate;
         let s = pois(lam1);
         if (EM_gain > 1){
           if (rng() < CIC_charge) s += 1;
@@ -524,7 +597,7 @@ function simulateImage(p){
     }
     for (let j=0;j<H;j++){
       for (let i=0;i<W;i++){
-        const lamN = (source[j*W+i] + skyAt(i) + dark_rate + extra_rate) * Nst;
+        const lamN = (source[j*W+i] + skyAtRow(i, j) + dark_rate + extra_rate) * Nst;
         let s = pois(lamN);
         if (EM_gain > 1){
           const cic_sum = Nst > 0 ? pois(CIC_charge * Nst) : 0;
@@ -545,7 +618,11 @@ function simulateImage(p){
     xPhys_per_pix: dispersion,    // Å/pix
     yPhys_per_pix: pixel_scale,   // "/pix
     Signal_el_total, sky_e_per_pix_per_exp, dark_per_pix_per_exp, extra_per_pix_per_exp,
-    cosmic_ray_loss, EM_gain, spectro
+    cosmic_ray_loss, EM_gain, spectro,
+    // Optics curves for the right-hand panel
+    throughputCurve, atmCurve, skyLineMult, slitProfile,
+    // Diagnostics
+    spectralProfile, spatialProfile
   };
 }
 
@@ -794,8 +871,14 @@ const IMG_FLAGS = {
   atmlambda: true,    // apply λ-dependent atmospheric transmission on the spectral profile (Gaussian-shaped, constant placeholder)
   sky_lines: false,   // add narrow sky emission lines on top of the continuum sky
   QElambda:  true,    // apply Throughput(λ) Gaussian shaping on the spectral axis
-  source_im: "Sim image"   // "Sim image" | "Source" | "Convolved source" | "SNR"
+  source_im: "Sim image",  // "Sim image" | "Source" | "Convolved source" | "SNR"
+  spectrum:  "Baseline emission line",   // either "Baseline emission line" or a key in SPECTRA_DATA.spectra
+  atm_kind:  "pwv_kpno (ground)",        // key in SPECTRA_DATA.atm (or "soft cosine fallback")
+  sky_kind:  "spectra_0.2A"              // key in SPECTRA_DATA.sky_lines
 };
+
+// Loaded from data/spectra.json at startup
+let SPECTRA_DATA = null;
 
 // Parameter coupling formulas — when active, the LHS is derived from the RHS and its slider is hidden.
 // Each entry: {key: target param, label: display, deps: [param names used], compute: (v)=>value}
@@ -930,13 +1013,44 @@ function buildImageOptionsUI(){
   const root = d3.select("#img-opts");
   root.selectAll("*").remove();
   const wrap = root.append("div").attr("class","acc-body");
-  // Display mode dropdown
-  const row0 = wrap.append("label").attr("class","kv").style("display","flex").style("gap","6px").style("margin-bottom","6px")
-    .attr("title","What to render in the Spectro image view: simulated detector image with noise, the noiseless source, the convolved source, or a per-pixel SNR map.")
-    .text("Display ");
-  const sel = row0.append("select").attr("id","img-mode");
-  ["Sim image","Source","Convolved source","SNR"].forEach(o => sel.append("option").attr("value",o).text(o));
-  sel.property("value", IMG_FLAGS.source_im).on("change", function(){ IMG_FLAGS.source_im = this.value; scheduleUpdate(); });
+
+  function dropdown(labelTxt, id, options, currentVal, onChange, tip){
+    const row = wrap.append("label").attr("class","kv").style("display","flex").style("gap","6px")
+      .style("margin-bottom","4px").style("align-items","center")
+      .attr("title", tip).text(labelTxt+" ");
+    const sel = row.append("select").attr("id",id).style("flex","1").style("min-width","0");
+    options.forEach(o => sel.append("option").attr("value",o).text(o));
+    sel.property("value", currentVal).on("change", function(){ onChange(this.value); scheduleUpdate(); });
+    return sel;
+  }
+
+  // Display mode
+  dropdown("Display", "img-mode",
+    ["Sim image","Source","Convolved source","SNR"],
+    IMG_FLAGS.source_im,
+    v => IMG_FLAGS.source_im = v,
+    "What to render: noisy simulated detector image, the noiseless source, the convolved source, or a per-pixel SNR map.");
+
+  // Spectrum
+  const spectraNames = ["Baseline emission line"].concat(SPECTRA_DATA ? Object.keys(SPECTRA_DATA.spectra) : []);
+  dropdown("Spectrum", "img-spec",
+    spectraNames, IMG_FLAGS.spectrum,
+    v => IMG_FLAGS.spectrum = v,
+    "Source spectrum. \"Baseline emission line\" = Gaussian centred on the observed λ. Other entries are real SEDs (QSO HST/FOS, COSMOS galaxies, Salvato QSO templates) resampled at bake-time.");
+
+  // Atm
+  const atmNames = SPECTRA_DATA ? Object.keys(SPECTRA_DATA.atm) : [];
+  if (atmNames.length) dropdown("Atm curve", "img-atm-kind",
+    atmNames, IMG_FLAGS.atm_kind,
+    v => IMG_FLAGS.atm_kind = v,
+    "Atmospheric transmission curve (only used when \"Atmospheric absorption\" is enabled).");
+
+  // Sky-lines kind
+  const skyNames = SPECTRA_DATA ? Object.keys(SPECTRA_DATA.sky_lines) : [];
+  if (skyNames.length) dropdown("Sky-line catalogue", "img-sky-kind",
+    skyNames, IMG_FLAGS.sky_kind,
+    v => IMG_FLAGS.sky_kind = v,
+    "Sky emission line catalogue (only used when \"Sky emission lines\" is enabled).");
 
   // Toggles
   function tog(id, label, key, tip){
@@ -946,11 +1060,11 @@ function buildImageOptionsUI(){
     r.append("span").style("margin-left","4px").text(" "+label);
   }
   tog("img-qe", "Throughput(λ) shaping (QE × instrument bandpass Gaussian)", "QElambda",
-    "Apply a Gaussian λ-dependent throughput (peak at the observed wavelength, FWHM = Throughput_FWHM). When off, throughput is flat across the band.");
-  tog("img-atm", "Atmospheric absorption (λ-dependent placeholder)", "atmlambda",
-    "Apply a soft λ-dependent atmospheric absorption shape (mild raised cosine across the band). The full pwv_kpno curve is not bundled in this web port.");
-  tog("img-skylines", "Sky emission lines (simulated)", "sky_lines",
-    "Inject ~6 narrow Gaussian sky lines on top of the continuum sky background. Lines are deterministic given the random seed.");
+    "Apply a Gaussian λ-dependent throughput (peak at the observed wavelength, FWHM = Throughput_FWHM).");
+  tog("img-atm", "Atmospheric absorption (λ-dependent)", "atmlambda",
+    "Apply the selected atmospheric transmission curve along the spectral axis.");
+  tog("img-skylines", "Sky emission lines", "sky_lines",
+    "Inject sky emission lines (from the selected catalogue) on top of the continuum sky.");
 }
 
 /* Build dependencies UI + show/hide slider rows when a dep becomes active */
@@ -1392,6 +1506,10 @@ function drawImageView(){
   pa.QElambda  = IMG_FLAGS.QElambda;
   pa.sky_lines = IMG_FLAGS.sky_lines;
   pa.source_im = IMG_FLAGS.source_im;
+  pa.spectrum  = IMG_FLAGS.spectrum;
+  pa.atm_kind  = IMG_FLAGS.atm_kind;
+  pa.sky_kind  = IMG_FLAGS.sky_kind;
+  pa.Redshift  = STATE.values.Redshift || 0;
   // Detector image size (kept fixed; you can change to scale with viewport)
   pa.W = 500; pa.H = 100;
   // Fresh realisation on each update — change seed deterministically so slider movement shows noise diversity
@@ -1423,6 +1541,8 @@ function drawImageView(){
 
   // ===== Profiles SVG (spatial avg + spectral avg, single & stacked) =====
   drawProfiles(sim);
+  // ===== Throughput / atm / sky-line curves =====
+  drawOptics(sim, pa);
   // ===== Histogram SVG =====
   drawHistogram(sim);
 }
@@ -1542,6 +1662,64 @@ function drawProfiles(sim){
   drawCurve(svg, spatS, spatK, half, H-half, "Spatial profile",  "spatial pixel");
 }
 
+function drawOptics(sim, pa){
+  const svg = d3.select("#svg-optics");
+  svg.selectAll("*").remove();
+  const W = svg.node().clientWidth, H = svg.node().clientHeight;
+  if (!W || !H) return;
+  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  const m = {l:38, r:8, t:14, b:22};
+
+  const xs = d3.scaleLinear().domain([sim.wavelengths[0], sim.wavelengths[sim.W-1]]).range([m.l, W-m.r]);
+  const ys = d3.scaleLinear().domain([0, 1.05]).range([H-m.b, m.t]);
+
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(4).tickFormat(d3.format(".0f")));
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(4));
+
+  // Throughput (blue)
+  svg.append("path").datum(Array.from(sim.throughputCurve))
+    .attr("fill","none").attr("stroke","#348ABD").attr("stroke-width",1.8)
+    .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
+  // Atmosphere (red)
+  svg.append("path").datum(Array.from(sim.atmCurve))
+    .attr("fill","none").attr("stroke","#E24A33").attr("stroke-width",1.5)
+    .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
+  // Sky lines (orange) — normalised to peak
+  if (sim.skyLineMult){
+    let pk = 0;
+    for (let i=0;i<sim.W;i++) if (sim.skyLineMult[i]>pk) pk = sim.skyLineMult[i];
+    if (pk > 0){
+      svg.append("path").datum(Array.from(sim.skyLineMult).map(v => v/pk))
+        .attr("fill","none").attr("stroke","#FBC15E").attr("stroke-width",1.2)
+        .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
+    }
+  }
+  // Spectral profile of the source (grey)
+  if (sim.spectralProfile){
+    let pk = 0;
+    for (let i=0;i<sim.W;i++) if (sim.spectralProfile[i]>pk) pk = sim.spectralProfile[i];
+    if (pk>0){
+      svg.append("path").datum(Array.from(sim.spectralProfile).map(v => v/pk))
+        .attr("fill","none").attr("stroke","#777").attr("stroke-width",1.2).attr("stroke-dasharray","3 2")
+        .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
+    }
+  }
+
+  // Title + legend
+  svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title")
+    .text(`λ (Å) → Throughput / Atm / Sky / Source`);
+  const items = [
+    {n:"Throughput", c:"#348ABD"},
+    {n:"Atm trans",  c:"#E24A33"},
+    {n:"Sky lines",  c:"#FBC15E"},
+    {n:"Source spec",c:"#777"}
+  ];
+  items.forEach((it,k)=>{
+    svg.append("rect").attr("x", m.l+4 + k*70).attr("y", m.t-2).attr("width",8).attr("height",8).attr("fill",it.c);
+    svg.append("text").attr("x", m.l+4 + k*70 + 11).attr("y", m.t+6).attr("class","legend").text(it.n);
+  });
+}
+
 function drawHistogram(sim){
   const svg = d3.select("#svg-hist");
   svg.selectAll("*").remove();
@@ -1658,8 +1836,21 @@ function buildInstrumentOptions(){
   applyInstrument(pref);
 }
 
+async function loadSpectraData(){
+  try {
+    const r = await fetch("data/spectra.json", {cache:"force-cache"});
+    if (!r.ok) throw new Error("HTTP "+r.status);
+    SPECTRA_DATA = await r.json();
+    console.log(`Loaded spectra.json: ${Object.keys(SPECTRA_DATA.spectra).length} spectra, ${Object.keys(SPECTRA_DATA.atm).length} atm, ${Object.keys(SPECTRA_DATA.sky_lines).length} sky-line catalogues`);
+  } catch (e){
+    console.warn("Could not load spectra.json:", e);
+    SPECTRA_DATA = null;
+  }
+}
+
 async function main(){
   initValuesToDefault();
+  await loadSpectraData();
   buildUI();
   buildDependencyUI();
   buildImageOptionsUI();
