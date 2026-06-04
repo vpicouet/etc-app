@@ -1740,6 +1740,51 @@ function attachImageHover(){
   wire("cv-stack",  "Stacked");
 }
 
+function attachIfsHover(){
+  if (STATE._ifsHoverAttached) return;
+  STATE._ifsHoverAttached = true;
+  const tip = document.getElementById("pixtip");
+  function wire(canvasId, label){
+    const cv = document.getElementById(canvasId);
+    if (!cv) return;
+    cv.addEventListener("mousemove", (e)=>{
+      const cache = STATE.imgCacheIfs; if (!cache) { tip.style.display="none"; return; }
+      const rect = cv.getBoundingClientRect();
+      const fx = (e.clientX - rect.left) / rect.width;
+      const fy = (e.clientY - rect.top)  / rect.height;
+      if (fx<0||fx>1||fy<0||fy>1){ tip.style.display="none"; return; }
+      // The IFS slice canvas has axes: x = spaxel index (0..n3-1), y = row (0..H-1)
+      const i = Math.max(0, Math.min(cache.W-1, Math.floor(fx*cache.W)));    // spaxel
+      const j = Math.max(0, Math.min(cache.H-1, Math.floor(fy*cache.H)));    // row
+      const data = canvasId === "cv-ifs-single" ? cache.single : cache.stack;
+      const v = data[j*cache.W + i];
+      // Physical coords: 1 spaxel = Slitwidth arcsec; 1 row = pixel_scale arcsec
+      const Slitwidth   = STATE.values.Slitwidth;
+      const pixel_scale = STATE.values.pixel_scale;
+      const dx_arcsec = (i - cache.W/2) * Slitwidth;     // ″ along the slicer axis
+      const dy_arcsec = (j - cache.H/2) * pixel_scale;   // ″ along the slit
+      const lam = IFS_STATE.lambda_center;
+      tip.textContent =
+        `${label} (spaxel ${i}, row ${j})\n` +
+        `value : ${v.toFixed(3)} e-\n` +
+        `λ     : ${lam!=null ? lam.toFixed(2) : "—"} Å\n` +
+        `Δx    : ${dx_arcsec>=0?"+":""}${dx_arcsec.toFixed(2)}″ (slicer axis)\n` +
+        `Δy    : ${dy_arcsec>=0?"+":""}${dy_arcsec.toFixed(2)}″ (along slit)`;
+      tip.style.display = "block";
+      const pad = 12;
+      let x = e.clientX + pad, y = e.clientY + pad;
+      const tipBox = tip.getBoundingClientRect();
+      if (x + tipBox.width  > window.innerWidth)  x = e.clientX - pad - tipBox.width;
+      if (y + tipBox.height > window.innerHeight) y = e.clientY - pad - tipBox.height;
+      tip.style.left = x + "px";
+      tip.style.top  = y + "px";
+    });
+    cv.addEventListener("mouseleave", ()=>{ tip.style.display="none"; });
+  }
+  wire("cv-ifs-single", "Single cube slice");
+  wire("cv-ifs-stack",  "Stacked cube slice");
+}
+
 function drawSlitOverlay(svgId, pa, sim){
   // Detector image is W (cols, spectral) × H (rows, spatial).
   // The slit's GEOMETRIC footprint on the detector (before dispersion):
@@ -2150,6 +2195,7 @@ function drawIfsView(){
   applyColorScale("ifs_single");
   applyColorScale("ifs_stack");
   attachImageColorscaleDrag();
+  attachIfsHover();
 
   // Titles
   document.getElementById("ifs-single-title").textContent =
