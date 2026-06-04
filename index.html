@@ -93,8 +93,11 @@
     padding:2px 6px;position:absolute;top:0;left:0;right:0;z-index:3}
   .img-cell canvas{width:100%;height:auto;display:block;image-rendering:pixelated;position:relative;z-index:1;cursor:crosshair}
   .img-cell svg.overlay{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
-  .img-extra{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
-  .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff}
+  /* 2×2 grid: left col = spatial profile (top) + histogram (bottom),
+     right col = spectral profile (top) + optics curves (bottom) */
+  .img-extra{flex:1 1 auto;min-height:0;display:grid;
+    grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px}
+  .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff;min-height:0}
 
   /* Pixel hover tooltip */
   #pixtip{position:fixed;pointer-events:none;background:rgba(0,0,0,0.85);color:#fff;
@@ -155,9 +158,10 @@
           </div>
         </div>
         <div class="img-extra">
-          <svg id="svg-profiles"></svg>
-          <svg id="svg-optics"></svg>
+          <svg id="svg-prof-spat"></svg>
+          <svg id="svg-prof-spec"></svg>
           <svg id="svg-hist"></svg>
+          <svg id="svg-optics"></svg>
         </div>
       </div>
     </div>
@@ -1710,46 +1714,52 @@ function drawSlitOverlay(svgId, pa, sim){
     .text(`slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″  (= ${slitW_pix.toFixed(1)} × ${slitH_pix.toFixed(1)} px)`);
 }
 
-function drawProfiles(sim){
-  const svg = d3.select("#svg-profiles");
-  svg.selectAll("*").remove();
-  const W = svg.node().clientWidth, H = svg.node().clientHeight;
-  if (!W || !H) return;
-  svg.attr("viewBox", `0 0 ${W} ${H}`);
-  const half = Math.floor(H/2);
-  const m = {l:38,r:8,t:16,b:18};
-
-  // spectral profile (mean over rows around centre) — top half
+/* Compute spectral profile (mean over a few central rows) and spatial profile (mean over a few central cols). */
+function computeProfiles(sim){
   const j0 = Math.max(0, Math.floor(sim.H/2 - 5)), j1 = Math.min(sim.H, Math.floor(sim.H/2 + 5));
   const specS = new Float64Array(sim.W), specK = new Float64Array(sim.W);
   for (let i=0;i<sim.W;i++){
     let aS=0, aK=0; for (let j=j0;j<j1;j++){ aS += sim.single[j*sim.W+i]; aK += sim.stack[j*sim.W+i]; }
     specS[i] = aS/(j1-j0); specK[i] = aK/(j1-j0);
   }
-  // spatial profile (mean over central spectral columns) — bottom half
   const i0 = Math.max(0, Math.floor(sim.W/2 - 8)), i1 = Math.min(sim.W, Math.floor(sim.W/2 + 8));
   const spatS = new Float64Array(sim.H), spatK = new Float64Array(sim.H);
   for (let j=0;j<sim.H;j++){
     let aS=0, aK=0; for (let i=i0;i<i1;i++){ aS += sim.single[j*sim.W+i]; aK += sim.stack[j*sim.W+i]; }
     spatS[j] = aS/(i1-i0); spatK[j] = aK/(i1-i0);
   }
+  return { specS, specK, spatS, spatK };
+}
 
-  function drawCurve(g, data1, data2, yOffset, hh, title, xLabel){
-    const all = Array.from(data1).concat(Array.from(data2)).filter(v=>isFinite(v));
-    const yMin = Math.min(...all), yMax = Math.max(...all);
-    const xs = d3.scaleLinear().domain([0, data1.length-1]).range([m.l, W-m.r]);
-    const ys = d3.scaleLinear().domain([yMin, yMax]).range([yOffset+hh-m.b, yOffset+m.t]);
-    g.append("g").attr("class","plot-axis").attr("transform",`translate(0,${yOffset+hh-m.b})`).call(d3.axisBottom(xs).ticks(5));
-    g.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3));
-    const line = d3.line().x((_,i)=>xs(i)).y(v=>ys(v));
-    g.append("path").datum(Array.from(data1)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",1).attr("d", line);
-    g.append("path").datum(Array.from(data2)).attr("fill","none").attr("stroke","#000").attr("stroke-width",1.6).attr("d", line);
-    g.append("text").attr("x", W-m.r-4).attr("y", yOffset+m.t+10).attr("text-anchor","end").attr("class","ax-title").text(title);
-    g.append("text").attr("x", (W+m.l-m.r)/2).attr("y", yOffset+hh-2).attr("text-anchor","middle").style("font-size","10px").style("fill","#444").text(xLabel);
-  }
+/* Draw a single-line+stack curve on its own SVG, with x-axis using `xValues`. */
+function drawCurveSvg(svgId, single, stack, xValues, title, xLabel){
+  const svg = d3.select("#"+svgId);
+  svg.selectAll("*").remove();
+  const W = svg.node().clientWidth, H = svg.node().clientHeight;
+  if (!W || !H) return;
+  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  const m = {l:38,r:8,t:16,b:22};
 
-  drawCurve(svg, specS, specK, 0, half, "Spectral profile (single grey, stack black)", "spectral pixel");
-  drawCurve(svg, spatS, spatK, half, H-half, "Spatial profile",  "spatial pixel");
+  const all = Array.from(single).concat(Array.from(stack)).filter(v=>isFinite(v));
+  const yMin = Math.min(...all), yMax = Math.max(...all);
+  const xs = d3.scaleLinear().domain([xValues[0], xValues[xValues.length-1]]).range([m.l, W-m.r]);
+  const ys = d3.scaleLinear().domain([yMin, yMax]).range([H-m.b, m.t]);
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(4).tickFormat(d3.format(".3~g")));
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3).tickFormat(d3.format(".2~g")));
+  const line = d3.line().x((_,i)=>xs(xValues[i])).y(v=>ys(v));
+  svg.append("path").datum(Array.from(single)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.55).attr("stroke-width",1.1).attr("d", line);
+  svg.append("path").datum(Array.from(stack)).attr("fill","none").attr("stroke","#000").attr("stroke-width",1.6).attr("d", line);
+  svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title").text(title);
+  svg.append("text").attr("x", (W+m.l-m.r)/2).attr("y", H-4).attr("text-anchor","middle").style("font-size","10px").style("fill","#444").text(xLabel);
+}
+
+function drawProfiles(sim){
+  const prof = computeProfiles(sim);
+  // x-axis values: spectral in Å (sim.wavelengths), spatial in arcsec offset from slit centre
+  const yValsArcsec = new Float64Array(sim.H);
+  for (let j=0;j<sim.H;j++) yValsArcsec[j] = (j - sim.H/2) * sim.yPhys_per_pix;
+  drawCurveSvg("svg-prof-spec", prof.specS, prof.specK, sim.wavelengths, "Spectral profile (single grey, stack black)", "λ [Å]");
+  drawCurveSvg("svg-prof-spat", prof.spatS, prof.spatK, yValsArcsec,    "Spatial profile",  "spatial offset [″]");
 }
 
 function drawOptics(sim, pa){
