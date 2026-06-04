@@ -143,6 +143,7 @@
     <div class="view-tabs">
       <div class="view-tab active" data-view="snr" title="Noise budget, contributions stack, SNR stack, surface-brightness limits">SNR</div>
       <div class="view-tab" data-view="img" title="Simulated detector image: source + sky + dark + RN + CIC (and EMCCD gamma amplification if EM_gain>1)">Spectro image</div>
+      <div class="view-tab" id="view-tab-ifs" data-view="ifs" style="display:none" title="IFS view: cube slice + integrated spectrum. Only shown when the current instrument is an IFS (dimensions=3 in the spreadsheet).">IFS</div>
     </div>
     <div class="plot-area">
       <svg id="plot" class="active" preserveAspectRatio="none"></svg>
@@ -164,6 +165,23 @@
           <svg id="svg-prof-spec"></svg>
           <svg id="svg-hist"></svg>
           <svg id="svg-optics"></svg>
+        </div>
+      </div>
+      <div id="plot-ifs" class="img-view">
+        <div class="img-row">
+          <div class="img-cell">
+            <div class="cell-title" id="ifs-single-title">Single cube — λ slice</div>
+            <canvas id="cv-ifs-single" title="DS9 colormap drag works here too. The cube is built from the 2D image by repeating the slit's spatial axis along the spaxel dimension (n3 = √(FOV)/Slitwidth)."></canvas>
+            <svg id="ov-ifs-single" class="overlay" preserveAspectRatio="none"></svg>
+          </div>
+          <div class="img-cell">
+            <div class="cell-title" id="ifs-stack-title">Stacked cube — λ slice</div>
+            <canvas id="cv-ifs-stack" title="Drag the dashed rectangle to choose the extraction region. The integrated spectrum below shows the average flux vs λ on that region."></canvas>
+            <svg id="ov-ifs-stack" class="overlay" preserveAspectRatio="none"></svg>
+          </div>
+        </div>
+        <div class="img-extra" style="grid-template-columns:1fr;grid-template-rows:1fr">
+          <svg id="svg-ifs-spec"></svg>
         </div>
       </div>
     </div>
@@ -962,7 +980,12 @@ function applyInstrument(name){
     if (k in d && typeof d[k]==="number" && isFinite(d[k])) STATE.values[k] = d[k];
   }
   if ("IFS" in d) FLAGS.IFS = !!d.IFS;
+  if (d.dimensions === 3) FLAGS.IFS = true;   // match Observation.py: dimensions=3 implies IFS=True
+  // Stash for IFS view (needs FOV_size)
+  STATE.instrument_FOV_size = (typeof d.FOV_size === "number") ? d.FOV_size : null;
   for (const k of Object.keys(PARAMS)) syncSlider(k);
+  IFS_STATE.rect = null;   // reset extraction box on instrument change
+  updateIfsTabVisibility();
 }
 
 /* ============================================================================
@@ -1870,6 +1893,261 @@ function drawHistogram(sim){
 }
 
 /* ============================================================================
+   IFS VIEW
+   ========================================================================== */
+// State for the draggable extraction rectangle (in cube spaxel/spatial coords).
+// Defaults to a small box centred on the source position; user can drag it.
+const IFS_STATE = {
+  rect: null,            // {x1, x2, y1, y2} in cube indices; null = use default centred small box
+  cube: null,            // Float64Array(H * W * n3) — single
+  cube_stack: null,      // same shape — stacked
+  H: 0, W: 0, n3: 0,
+  wavelengths: null      // Float64Array(W) Å
+};
+
+/* Build a "fake" IFS cube from the 2D image by repeating the spatial axis along the n3 spaxel axis
+   and shuffling each row independently — matches Observation.py:
+     ifs_cube = np.repeat(im[:,:,None], n3, axis=2)
+     ifs_cube = take_along_axis(ifs_cube, random_permutation_per_row, axis=1) */
+function buildIfsCube(im, H, W, n3, seed){
+  const cube = new Float64Array(H * W * n3);
+  const rng = makeRng(seed >>> 0);
+  // For each (j, k_spaxel) row, generate a permutation of W indices, then read im[j, perm[i]] into cube[j, i, k]
+  for (let j=0;j<H;j++){
+    for (let k=0;k<n3;k++){
+      // Fisher–Yates shuffle of [0..W-1]
+      const perm = new Int32Array(W);
+      for (let i=0;i<W;i++) perm[i] = i;
+      for (let i=W-1;i>0;i--){
+        const r = Math.floor(rng()*(i+1));
+        const tmp = perm[i]; perm[i] = perm[r]; perm[r] = tmp;
+      }
+      // Fill cube row
+      for (let i=0;i<W;i++){
+        cube[(j*W + i)*n3 + k] = im[j*W + perm[i]];
+      }
+    }
+  }
+  return cube;
+}
+
+/* Take a λ-slice from the cube: mean over (col_lo .. col_hi) in W → returns (H × n3) Float64Array */
+function ifsSlice(cube, H, W, n3, colLo, colHi){
+  const out = new Float64Array(H * n3);
+  const denom = Math.max(1, colHi - colLo);
+  for (let j=0;j<H;j++){
+    for (let k=0;k<n3;k++){
+      let s = 0;
+      for (let i=colLo;i<colHi;i++){
+        s += cube[(j*W + i)*n3 + k];
+      }
+      out[j*n3 + k] = s/denom;
+    }
+  }
+  return out;
+}
+
+/* Integrated spectrum: mean over a (x1..x2 in n3, y1..y2 in H) box, returns Float64Array(W). */
+function ifsIntegratedSpectrum(cube, H, W, n3, x1, x2, y1, y2){
+  x1 = Math.max(0, Math.floor(x1)); x2 = Math.min(n3, Math.ceil(x2));
+  y1 = Math.max(0, Math.floor(y1)); y2 = Math.min(H, Math.ceil(y2));
+  if (x2<=x1) x2 = x1+1;
+  if (y2<=y1) y2 = y1+1;
+  const out = new Float64Array(W);
+  const denom = Math.max(1, (x2-x1)*(y2-y1));
+  for (let i=0;i<W;i++){
+    let s = 0;
+    for (let j=y1;j<y2;j++){
+      for (let k=x1;k<x2;k++){
+        s += cube[(j*W + i)*n3 + k];
+      }
+    }
+    out[i] = s/denom;
+  }
+  return out;
+}
+
+function drawIfsView(){
+  // Resimulate the 2D image (same as Spectro image view)
+  const pa = {};
+  for (const k of Object.keys(PARAMS)) pa[k] = STATE.values[k];
+  applyDependenciesScalar(pa);
+  pa.Signal_in = pa.Signal;
+  pa.IFS = FLAGS.IFS; pa.spectrograph = FLAGS.spectrograph; pa.counting_mode = FLAGS.counting_mode;
+  pa.atmlambda = IMG_FLAGS.atmlambda; pa.QElambda = IMG_FLAGS.QElambda;
+  pa.sky_lines = IMG_FLAGS.sky_lines; pa.source_im = IMG_FLAGS.source_im;
+  pa.spectrum = IMG_FLAGS.spectrum; pa.atm_kind = IMG_FLAGS.atm_kind; pa.sky_kind = IMG_FLAGS.sky_kind;
+  pa.Redshift = STATE.values.Redshift || 0;
+  pa.W = 500; pa.H = 100;
+  STATE.imgSeed = (STATE.imgSeed + 1) >>> 0;
+  pa.seed = STATE.imgSeed;
+  let sim;
+  try { sim = simulateImage(pa); }
+  catch(e){ d3.select("#status").classed("err",true).text("Image sim error: "+e.message); console.error(e); return; }
+
+  // Compute n3 = √(60×60×FOV_size) / Slitwidth   (FOV_size in arcmin²)
+  const FOV_size = STATE.instrument_FOV_size || 100;   // fallback if missing
+  let n3 = Math.max(2, Math.round(Math.sqrt(60*60*FOV_size) / Math.max(0.01, pa.Slitwidth)));
+  // Cap n3 to keep the cube tractable (cap is purely a UI/memory limit, not physical)
+  n3 = Math.min(n3, 80);
+
+  // Build cubes
+  const cube  = buildIfsCube(sim.single, sim.H, sim.W, n3, pa.seed^0xA5A5);
+  const cubeK = buildIfsCube(sim.stack,  sim.H, sim.W, n3, pa.seed^0x5A5A);
+  IFS_STATE.cube = cube; IFS_STATE.cube_stack = cubeK;
+  IFS_STATE.H = sim.H; IFS_STATE.W = sim.W; IFS_STATE.n3 = n3;
+  IFS_STATE.wavelengths = sim.wavelengths;
+
+  // λ slice: ±lambda_stack/2 around the centre column
+  const colC = Math.floor(sim.W/2);
+  const lstk = Math.max(1, Math.round(pa.lambda_stack || 1));
+  const colLo = Math.max(0, colC - Math.floor(lstk/2));
+  const colHi = Math.min(sim.W, colC + Math.ceil(lstk/2));
+  const sliceSingle = ifsSlice(cube,  sim.H, sim.W, n3, colLo, colHi);
+  const sliceStack  = ifsSlice(cubeK, sim.H, sim.W, n3, colLo, colHi);
+
+  // Default extraction rectangle: small box around the centre of the slicer
+  if (!IFS_STATE.rect){
+    const rh = Math.max(2, Math.round(sim.H * 0.1));
+    const rw = Math.max(2, Math.round(n3   * 0.1));
+    IFS_STATE.rect = { x1: n3/2 - rw/2, x2: n3/2 + rw/2, y1: sim.H/2 - rh/2, y2: sim.H/2 + rh/2 };
+  }
+
+  // Render slices on canvases
+  const cvS = document.getElementById("cv-ifs-single");
+  const cvK = document.getElementById("cv-ifs-stack");
+  const vminS = percentile(sliceSingle, 0.01), vmaxS = percentile(sliceSingle, 0.99);
+  const vminK = percentile(sliceStack,  0.01), vmaxK = percentile(sliceStack,  0.99);
+  rasterizeImage(cvS, sliceSingle, n3, sim.H, vminS, vmaxS, false);
+  rasterizeImage(cvK, sliceStack,  n3, sim.H, vminK, vmaxK, false);
+
+  // Titles
+  document.getElementById("ifs-single-title").textContent =
+    `Single cube — λ slice (${sim.H} × ${n3} spaxels, λ ≈ ${sim.wavelengths[colC].toFixed(1)} Å ± ${(lstk/2*pa.dispersion).toFixed(2)} Å)`;
+  document.getElementById("ifs-stack-title").textContent =
+    `Stacked cube — λ slice (${sim.H} × ${n3} spaxels, full FOV = ${Math.sqrt(FOV_size).toFixed(1)}′ × ${Math.sqrt(FOV_size).toFixed(1)}′)`;
+
+  // Draw the draggable rectangle overlay on the stacked slice
+  drawIfsRect();
+
+  // Integrated spectrum
+  drawIfsSpectrum();
+}
+
+function drawIfsRect(){
+  const r = IFS_STATE.rect; if (!r) return;
+  const svg = d3.select("#ov-ifs-stack");
+  svg.selectAll("*").remove();
+  svg.attr("viewBox", `0 0 ${IFS_STATE.n3} ${IFS_STATE.H}`);
+  svg.append("rect")
+    .attr("x", r.x1).attr("y", r.y1)
+    .attr("width", r.x2 - r.x1).attr("height", r.y2 - r.y1)
+    .attr("fill", "none").attr("stroke", "#000").attr("stroke-dasharray","2 1.5")
+    .attr("stroke-width", Math.max(0.6, IFS_STATE.H*0.012));
+  // small centre marker
+  const cx = (r.x1+r.x2)/2, cy = (r.y1+r.y2)/2;
+  svg.append("circle").attr("cx", cx).attr("cy", cy).attr("r", Math.max(0.7, IFS_STATE.H*0.015))
+    .attr("fill", "#E24A33");
+}
+
+function drawIfsSpectrum(){
+  const svg = d3.select("#svg-ifs-spec");
+  svg.selectAll("*").remove();
+  const W = 400, H = 200;
+  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
+  const m = {l:42,r:8,t:16,b:24};
+
+  const r = IFS_STATE.rect;
+  if (!r || !IFS_STATE.cube) return;
+  const specSingle = ifsIntegratedSpectrum(IFS_STATE.cube,       IFS_STATE.H, IFS_STATE.W, IFS_STATE.n3, r.x1, r.x2, r.y1, r.y2);
+  const specStack  = ifsIntegratedSpectrum(IFS_STATE.cube_stack, IFS_STATE.H, IFS_STATE.W, IFS_STATE.n3, r.x1, r.x2, r.y1, r.y2);
+
+  const xValues = IFS_STATE.wavelengths;
+  const all = Array.from(specSingle).concat(Array.from(specStack)).filter(v=>isFinite(v));
+  const yMin = Math.min(...all), yMax = Math.max(...all);
+  const xs = d3.scaleLinear().domain([xValues[0], xValues[xValues.length-1]]).range([m.l, W-m.r]);
+  const ys = d3.scaleLinear().domain([yMin, yMax]).range([H-m.b, m.t]);
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(4).tickFormat(d3.format(".3~g")));
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3).tickFormat(d3.format(".2~g")));
+  const line = d3.line().x((_,i)=>xs(xValues[i])).y(v=>ys(v));
+  svg.append("path").datum(Array.from(specSingle)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",1.1).attr("d", line);
+  svg.append("path").datum(Array.from(specStack)).attr("fill","none").attr("stroke","#000").attr("stroke-width",1.6).attr("d", line);
+  svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title")
+    .text(`Integrated spectrum over [${r.x1.toFixed(0)}..${r.x2.toFixed(0)}] × [${r.y1.toFixed(0)}..${r.y2.toFixed(0)}] (single grey, stack black)`);
+  svg.append("text").attr("x", (W+m.l-m.r)/2).attr("y", H-4).attr("text-anchor","middle").style("font-size","10px").style("fill","#444").text("λ [Å]");
+}
+
+function attachIfsRectDrag(){
+  if (STATE._ifsDragAttached) return;
+  STATE._ifsDragAttached = true;
+  const ov = document.getElementById("ov-ifs-stack");
+  // The overlay svg has pointer-events:none in CSS — we need to enable them for the drag area.
+  ov.style.pointerEvents = "auto";
+  ov.style.cursor = "move";
+
+  let dragging = false, mode = null, ox = 0, oy = 0, r0 = null;
+  function pickMode(svgX, svgY, r){
+    const edge = Math.max(2, IFS_STATE.H*0.04);
+    // resize handles: corners
+    if (Math.abs(svgX - r.x1) < edge && Math.abs(svgY - r.y1) < edge) return "nw";
+    if (Math.abs(svgX - r.x2) < edge && Math.abs(svgY - r.y2) < edge) return "se";
+    // inside → move
+    if (svgX > r.x1 && svgX < r.x2 && svgY > r.y1 && svgY < r.y2) return "move";
+    // outside → recentre
+    return "recentre";
+  }
+  function toSvgCoords(e){
+    const rect = ov.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) / rect.width  * IFS_STATE.n3,
+      y: (e.clientY - rect.top)  / rect.height * IFS_STATE.H
+    };
+  }
+  ov.addEventListener("mousedown", e=>{
+    if (!IFS_STATE.rect) return;
+    e.preventDefault();
+    const p = toSvgCoords(e);
+    const r = IFS_STATE.rect;
+    mode = pickMode(p.x, p.y, r);
+    if (mode === "recentre"){
+      // Centre the rectangle on the click position, keep size
+      const w = r.x2-r.x1, h = r.y2-r.y1;
+      IFS_STATE.rect = { x1: p.x-w/2, x2: p.x+w/2, y1: p.y-h/2, y2: p.y+h/2 };
+      mode = "move";
+    }
+    dragging = true;
+    ox = p.x; oy = p.y; r0 = {...IFS_STATE.rect};
+    drawIfsRect(); drawIfsSpectrum();
+  });
+  window.addEventListener("mousemove", e=>{
+    if (!dragging) return;
+    const p = toSvgCoords(e);
+    const dx = p.x - ox, dy = p.y - oy;
+    let r = {...r0};
+    if (mode === "move"){
+      r.x1 += dx; r.x2 += dx; r.y1 += dy; r.y2 += dy;
+    } else if (mode === "nw"){
+      r.x1 += dx; r.y1 += dy;
+      if (r.x2 - r.x1 < 1) r.x1 = r.x2 - 1;
+      if (r.y2 - r.y1 < 1) r.y1 = r.y2 - 1;
+    } else if (mode === "se"){
+      r.x2 += dx; r.y2 += dy;
+      if (r.x2 - r.x1 < 1) r.x2 = r.x1 + 1;
+      if (r.y2 - r.y1 < 1) r.y2 = r.y1 + 1;
+    }
+    // Clamp to cube bounds
+    r.x1 = Math.max(0, Math.min(IFS_STATE.n3 - 1, r.x1));
+    r.x2 = Math.max(1, Math.min(IFS_STATE.n3,     r.x2));
+    r.y1 = Math.max(0, Math.min(IFS_STATE.H  - 1, r.y1));
+    r.y2 = Math.max(1, Math.min(IFS_STATE.H,      r.y2));
+    IFS_STATE.rect = r;
+    drawIfsRect();
+    drawIfsSpectrum();
+  });
+  window.addEventListener("mouseup", ()=> { dragging = false; mode = null; });
+}
+
+/* ============================================================================
    7. ORCHESTRATION
    ========================================================================== */
 let updateScheduled = false;
@@ -1880,7 +2158,18 @@ function setView(view){
   document.querySelectorAll(".view-tab").forEach(el => el.classList.toggle("active", el.dataset.view===view));
   document.getElementById("plot").classList.toggle("active", view==="snr");
   document.getElementById("plot-img").classList.toggle("active", view==="img");
+  document.getElementById("plot-ifs").classList.toggle("active", view==="ifs");
   scheduleUpdate();
+}
+
+/* Show/hide the IFS tab depending on the current instrument's dimensions column. */
+function updateIfsTabVisibility(){
+  const d = STATE.instruments && STATE.current_instrument ? STATE.instruments.dict[STATE.current_instrument] : null;
+  const isIFS = !!d && (d.dimensions === 3 || d.IFS === 1 || d.IFS === true);
+  const tab = document.getElementById("view-tab-ifs");
+  if (tab) tab.style.display = isIFS ? "" : "none";
+  // If currently in IFS view but instrument changed to non-IFS, fall back to SNR
+  if (!isIFS && STATE.view === "ifs") setView("snr");
 }
 
 function doUpdate(){
@@ -1906,6 +2195,7 @@ function doUpdate(){
   document.getElementById("meta").textContent = STATE.current_instrument
     ? `${STATE.current_instrument} • SNR ${res.SNR[iCur].toFixed(2)}` : "";
   if (STATE.view === "snr") drawPlot(res);
+  else if (STATE.view === "ifs") { drawIfsView(); attachIfsRectDrag(); }
   else drawImageView();
 }
 
