@@ -989,7 +989,8 @@ function applyInstrument(name){
   // Stash for IFS view (needs FOV_size)
   STATE.instrument_FOV_size = (typeof d.FOV_size === "number") ? d.FOV_size : null;
   for (const k of Object.keys(PARAMS)) syncSlider(k);
-  IFS_STATE.rect = null;   // reset extraction box on instrument change
+  IFS_STATE.rect = null;          // reset extraction box on instrument change
+  IFS_STATE.lambda_center = null; // reset λ cursor → defaults to central detector λ next render
   updateIfsTabVisibility();
 }
 
@@ -1950,7 +1951,8 @@ const IFS_STATE = {
   cube: null,            // Float64Array(H * W * n3) — single
   cube_stack: null,      // same shape — stacked
   H: 0, W: 0, n3: 0,
-  wavelengths: null      // Float64Array(W) Å
+  wavelengths: null,     // Float64Array(W) Å
+  lambda_center: null    // Å — null = use middle of the detector spectral range
 };
 
 /* Build a proper IFS cube from a SEPARABLE source model:
@@ -2114,8 +2116,14 @@ function drawIfsView(){
   IFS_STATE.H = sim.H; IFS_STATE.W = sim.W; IFS_STATE.n3 = n3;
   IFS_STATE.wavelengths = sim.wavelengths;
 
-  // λ slice: ±lambda_stack/2 around the centre column
-  const colC = Math.floor(sim.W/2);
+  // λ slice: ±lambda_stack/2 around the cursor column (set by IFS_STATE.lambda_center, default = central λ)
+  if (IFS_STATE.lambda_center == null){
+    IFS_STATE.lambda_center = sim.wavelengths[Math.floor(sim.W/2)];
+  }
+  // Clamp lambda_center to the detector's spectral range (so a wavelength slider change is followed)
+  IFS_STATE.lambda_center = Math.max(sim.wavelengths[0], Math.min(sim.wavelengths[sim.W-1], IFS_STATE.lambda_center));
+  // Find the column matching the requested λ
+  const colC = Math.max(0, Math.min(sim.W-1, Math.round((IFS_STATE.lambda_center - sim.wavelengths[0]) / (sim.wavelengths[sim.W-1]-sim.wavelengths[0]) * (sim.W-1))));
   const lstk = Math.max(1, Math.round(pa.lambda_stack || 1));
   const colLo = Math.max(0, colC - Math.floor(lstk/2));
   const colHi = Math.min(sim.W, colC + Math.ceil(lstk/2));
@@ -2197,8 +2205,69 @@ function drawIfsSpectrum(){
   svg.append("path").datum(Array.from(specSingle)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",1.1).attr("d", line);
   svg.append("path").datum(Array.from(specStack)).attr("fill","none").attr("stroke","#000").attr("stroke-width",1.6).attr("d", line);
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title")
-    .text(`Integrated spectrum over [${r.x1.toFixed(0)}..${r.x2.toFixed(0)}] × [${r.y1.toFixed(0)}..${r.y2.toFixed(0)}] (single grey, stack black)`);
+    .text(`Integrated spectrum over [${r.x1.toFixed(0)}..${r.x2.toFixed(0)}] × [${r.y1.toFixed(0)}..${r.y2.toFixed(0)}] (single grey, stack black). Drag the red line to slice the cube at another λ.`);
   svg.append("text").attr("x", (W+m.l-m.r)/2).attr("y", H-4).attr("text-anchor","middle").style("font-size","10px").style("fill","#444").text("λ [Å]");
+
+  // ----- Draggable vertical λ cursor -----
+  const lc = IFS_STATE.lambda_center;
+  if (lc != null){
+    const xPos = xs(lc);
+    // Main vertical line
+    svg.append("line").attr("class","ifs-lambda-line")
+      .attr("x1", xPos).attr("x2", xPos).attr("y1", m.t).attr("y2", H-m.b)
+      .attr("stroke", "#E24A33").attr("stroke-width", 1.6);
+    // Two small arrow heads at top of the line (left/right) for affordance
+    const arrowY = m.t + 6;
+    const arrowSize = 6;
+    svg.append("polygon").attr("class","ifs-lambda-arrow")
+      .attr("points", `${xPos-2},${arrowY} ${xPos-2-arrowSize},${arrowY-arrowSize/2} ${xPos-2-arrowSize},${arrowY+arrowSize/2}`)
+      .attr("fill", "#E24A33");
+    svg.append("polygon").attr("class","ifs-lambda-arrow")
+      .attr("points", `${xPos+2},${arrowY} ${xPos+2+arrowSize},${arrowY-arrowSize/2} ${xPos+2+arrowSize},${arrowY+arrowSize/2}`)
+      .attr("fill", "#E24A33");
+    // Tag the wavelength
+    svg.append("text").attr("x", xPos).attr("y", m.t-2).attr("text-anchor","middle")
+      .style("font-size","10px").style("fill","#E24A33").style("font-weight","600")
+      .text(`λ = ${lc.toFixed(1)} Å`);
+    // Wide invisible hit area to make the line easy to grab
+    svg.append("rect").attr("class","ifs-lambda-hit")
+      .attr("x", xPos-7).attr("y", m.t).attr("width", 14).attr("height", H-m.b-m.t)
+      .attr("fill", "transparent").style("cursor", "ew-resize")
+      .on("mousedown", function(e){
+        if (e.button !== 0 || e.ctrlKey) return;
+        e.preventDefault(); e.stopPropagation();
+        STATE._ifsLambdaDrag = { xs, m, W, dragging: true };
+      });
+  }
+}
+
+/* Global drag handlers for the λ cursor — bound once. */
+function attachIfsLambdaDrag(){
+  if (STATE._ifsLambdaDragAttached) return;
+  STATE._ifsLambdaDragAttached = true;
+  const svg = document.getElementById("svg-ifs-spec");
+  window.addEventListener("mousemove", e => {
+    const d = STATE._ifsLambdaDrag;
+    if (!d || !d.dragging) return;
+    const rect = svg.getBoundingClientRect();
+    // Convert to viewBox coordinates: viewBox is 0..W with width = current measured cell width
+    const fx = (e.clientX - rect.left) / rect.width;
+    const xPx = fx * d.W;
+    // Invert d3 linear scale: xs maps [λmin, λmax] → [m.l, W-m.r]
+    const xMin = d.xs.range()[0], xMax = d.xs.range()[1];
+    const f = Math.max(0, Math.min(1, (xPx - xMin) / (xMax - xMin)));
+    const lamDomain = d.xs.domain();
+    IFS_STATE.lambda_center = lamDomain[0] + f * (lamDomain[1] - lamDomain[0]);
+    // Throttle the cube re-slice with RAF
+    if (!STATE._ifsLambdaPending){
+      STATE._ifsLambdaPending = true;
+      requestAnimationFrame(()=>{
+        STATE._ifsLambdaPending = false;
+        drawIfsView();
+      });
+    }
+  });
+  window.addEventListener("mouseup", ()=> { if (STATE._ifsLambdaDrag) STATE._ifsLambdaDrag.dragging = false; });
 }
 
 function attachIfsRectDrag(){
@@ -2313,7 +2382,7 @@ function doUpdate(){
   document.getElementById("meta").textContent = STATE.current_instrument
     ? `${STATE.current_instrument} • SNR ${res.SNR[iCur].toFixed(2)}` : "";
   if (STATE.view === "snr") drawPlot(res);
-  else if (STATE.view === "ifs") { drawIfsView(); attachIfsRectDrag(); }
+  else if (STATE.view === "ifs") { drawIfsView(); attachIfsRectDrag(); attachIfsLambdaDrag(); }
   else drawImageView();
 }
 
@@ -2340,7 +2409,10 @@ function buildXAxisOptions(){
 function buildInstrumentOptions(){
   const sel = d3.select("#instrument"); sel.selectAll("*").remove();
   for (const n of STATE.instruments.colnames) sel.append("option").attr("value",n).text(n);
-  const pref = STATE.instruments.colnames.includes("FIREBall-2 2025") ? "FIREBall-2 2025" : STATE.instruments.colnames[0];
+  // Pick the first available preferred instrument from this list
+  const preferOrder = ["SCWI SPEC", "FIREBall-2 2025"];
+  let pref = STATE.instruments.colnames[0];
+  for (const p of preferOrder){ if (STATE.instruments.colnames.includes(p)){ pref = p; break; } }
   sel.property("value", pref).on("change", function(){ applyInstrument(this.value); scheduleUpdate(); });
   applyInstrument(pref);
 }
