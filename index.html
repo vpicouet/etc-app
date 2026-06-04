@@ -1012,7 +1012,7 @@ function getPlotDim(){
 function makePanels(W,H,n){
   // Tight layout: only the global x-label sits at the very bottom.
   // Inner panels share the x-axis (no per-panel x-ticks), only the last panel has them.
-  const margin = {l:64, r:140, t:10, b:28};
+  const margin = {l:64, r:14, t:10, b:28};
   const innerW = W - margin.l - margin.r;
   const innerH = H - margin.t - margin.b;
   const ph = innerH / n;
@@ -1299,14 +1299,27 @@ function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, 
 }
 
 function legendBlock(g, panel, items){
-  const x0 = panel.x + panel.w + 6;
-  let y0 = panel.y + 8;
-  items.forEach(it=>{
-    g.append("rect").attr("x",x0).attr("y",y0-8).attr("width",9).attr("height",9)
-      .attr("fill",it.color).attr("fill-opacity", it.alpha!=null?it.alpha:0.85);
-    g.append("text").attr("x",x0+13).attr("y",y0+1).attr("class","legend").text(it.name);
-    y0 += 12;
-  });
+  // Render legend inside the panel, anchored to top-right, with a translucent white background.
+  const lineH = 12, padX = 6, padY = 4;
+  // Estimate width via longest item name × ~6 px (monospaced-ish approximation)
+  let maxLen = 0;
+  for (const it of items) if (it.name.length > maxLen) maxLen = it.name.length;
+  const swatchW = 9, swatchGap = 5;
+  const labelW = Math.min(panel.w * 0.6, Math.max(70, maxLen * 5.8));
+  const boxW = padX*2 + swatchW + swatchGap + labelW;
+  const boxH = padY*2 + items.length * lineH;
+  const x0 = panel.x + panel.w - boxW - 6;
+  const y0 = panel.y + 6;
+  g.append("rect").attr("x", x0).attr("y", y0).attr("width", boxW).attr("height", boxH)
+    .attr("fill", "#fff").attr("fill-opacity", 0.78)
+    .attr("stroke", "#bbb").attr("stroke-opacity", 0.5).attr("rx", 3);
+  let y = y0 + padY + 9;
+  for (const it of items){
+    g.append("rect").attr("x", x0 + padX).attr("y", y - 8).attr("width", swatchW).attr("height", swatchW)
+      .attr("fill", it.color).attr("fill-opacity", it.alpha!=null?it.alpha:0.85);
+    g.append("text").attr("x", x0 + padX + swatchW + swatchGap).attr("y", y + 1).attr("class","legend").text(it.name);
+    y += lineH;
+  }
 }
 
 /* ============================================================================
