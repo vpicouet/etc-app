@@ -7,8 +7,6 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <!-- Baked spectra data — also accessible via fetch("data/spectra.json"). The .js wrapper lets file:// work. -->
 <script src="data/spectra.js"></script>
-<!-- Theme stylesheet (overrides CSS variables defined in :root below). -->
-<link id="theme-css" rel="stylesheet" href="themes/default.css">
 <style>
   /* ===== DESIGN TOKENS ============================================================
      All visible style is parameterised through CSS variables so that theme files in
@@ -90,6 +88,15 @@
     --error:#f85149;
     --img-bg:#000000;
     --shadow-elev-1:0 1px 2px rgba(0,0,0,0.4);
+
+    /* Dark-adapted plot tokens — affect the bottom analysis sub-plots (Spectro / IFS bottom row)
+       and the SNR plot axes so the white background + dark text isn't broken. */
+    --plot-axis-text:#c9d1d9;
+    --plot-axis-line:#5a6473;
+    --plot-legend-text:#e6edf3;
+    --plot-vline:#e6edf3;
+    --plot-ax-title:#e6edf3;
+    --plot-bg:#1a1f27;
   }
 
   /* ===== BASE ================================================================== */
@@ -155,7 +162,11 @@
   .slider-row label{font-size:11px;color:var(--muted);cursor:pointer;user-select:none}
   .slider-row label:hover{color:var(--accent);text-decoration:underline}
   .slider-row label.is-x{color:var(--accent-2);font-weight:600}
-  .slider-row input[type="range"]{width:100%;accent-color:var(--accent)}
+  .slider-row input[type="range"]{width:100%;accent-color:var(--accent);
+    height:14px;background:transparent;color-scheme:light}
+  /* Dim sliders in dark mode (color-scheme:dark makes the native track grey instead of white) */
+  body[data-mode="dark"] .slider-row input[type="range"]{color-scheme:dark;opacity:0.85}
+  body[data-mode="dark"] .slider-row input[type="range"]:hover{opacity:1}
   .slider-row .val{font-size:11px;text-align:right;color:var(--text);
     font-variant-numeric:tabular-nums;font-family:var(--font-mono)}
   .flags-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
@@ -167,7 +178,7 @@
   .plot-area > svg, .plot-area > .img-view{display:none;flex:1 1 0;min-height:0;width:100%;height:100%}
   .plot-area > svg.active{display:block}
   .plot-area > .img-view.active{display:flex}
-  #plot{display:none;width:100%;height:100%}
+  #plot{display:none;width:100%;height:100%;background:var(--plot-bg)}
   #plot.active{display:block}
   .plot-axis text{font-size:10px;fill:var(--plot-axis-text)}
   .plot-axis path,.plot-axis line{stroke:var(--plot-axis-line);shape-rendering:crispEdges}
@@ -222,6 +233,8 @@
     header nav{flex-wrap:wrap}
   }
 </style>
+<!-- Theme stylesheet placed AFTER the inline style so its CSS variables effectively override the defaults. -->
+<link id="theme-css" rel="stylesheet" href="themes/default.css">
 </head>
 <body>
 
@@ -1624,9 +1637,13 @@ function legendBlock(g, panel, items){
   const boxH = padY*2 + items.length * lineH;
   const x0 = panel.x + panel.w - boxW - 6;
   const y0 = panel.y + 6;
+  // Read theme-aware colors so the legend matches dark mode.
+  const cs = getComputedStyle(document.body);
+  const bgC = cs.getPropertyValue("--plot-bg").trim() || "#fff";
+  const lnC = cs.getPropertyValue("--line").trim() || "#bbb";
   g.append("rect").attr("x", x0).attr("y", y0).attr("width", boxW).attr("height", boxH)
-    .attr("fill", "#fff").attr("fill-opacity", 0.78)
-    .attr("stroke", "#bbb").attr("stroke-opacity", 0.5).attr("rx", 3);
+    .attr("fill", bgC).attr("fill-opacity", 0.78)
+    .attr("stroke", lnC).attr("stroke-opacity", 0.5).attr("rx", 3);
   let y = y0 + padY + 9;
   for (const it of items){
     g.append("rect").attr("x", x0 + padX).attr("y", y - 8).attr("width", swatchW).attr("height", swatchW)
