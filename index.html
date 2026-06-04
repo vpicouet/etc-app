@@ -473,61 +473,78 @@ function simulateImage(p){
   // Spectral profile of the source — either:
   //   - "Baseline emission line": Gaussian centred mid-W, sigma = PSF_lam (original behaviour), OR
   //   - a baked spectrum (continuum SED): interpolate it on the detector wavelengths
+  //
+  // We follow Observation.py SimulateFIREBallemCCDImage closely:
+  //   - spatialProfile = Gaussian1D(amp=1, sigma=PSF_x)         (peak=1, NOT sum=1)
+  //   - spectra        = Gaussian1D(amp=1, sigma=PSF_λ) × atm × throughput
+  //   - source_im      = outer(spectra, spatial × slit) / Σ_smaller_psf
+  //   - amplitude      = Signal_el_total (proportional to Signal slider through Signal_el_total)
+  // The key trick (Python): we normalise the total flux by the sum of a NARROWER PSF, which makes
+  // the peak of the source proportional to Signal_el_total / (2π σ_y σ_λ) — physically correct,
+  // and visible on the imshow when Signal grows.
+
   const spectralProfile = new Float64Array(W);
-  let spSum = 0;
   const wantedSpec = p.spectrum || "Baseline emission line";
   if (wantedSpec === "Baseline emission line" || !SPECTRA_DATA || !SPECTRA_DATA.spectra[wantedSpec]){
-    for (let i=0;i<W;i++){ spectralProfile[i] = gauss1d(i, W/2, PSF_lam); spSum += spectralProfile[i]; }
+    // Gaussian emission line, peak=1 at the centre
+    for (let i=0;i<W;i++) spectralProfile[i] = gauss1d(i, W/2, PSF_lam);
   } else {
-    // Redshift the source frame to the observed frame
     const redshift = (typeof p.Redshift==="number") ? p.Redshift : 0;
     const observedRest = new Float64Array(W);
     for (let i=0;i<W;i++) observedRest[i] = wavelengths[i] / (1 + redshift);
     const fluxRest = interpCurve(SPECTRA_DATA.spectra[wantedSpec], SPECTRA_DATA.grid, observedRest);
-    // SED uses the same units everywhere — we normalise to peak=1 so the user controls amplitude via the Signal slider.
+    // SED with peak=1 (so it acts like the Gaussian baseline — Signal_el_total carries the magnitude)
     let pk = 0; for (let i=0;i<W;i++) if (fluxRest[i]>pk) pk = fluxRest[i];
     if (!(pk>0)) pk = 1;
-    for (let i=0;i<W;i++){ spectralProfile[i] = fluxRest[i]/pk; spSum += spectralProfile[i]; }
+    for (let i=0;i<W;i++) spectralProfile[i] = fluxRest[i]/pk;
   }
-  // Apply throughput × atm
+  // Apply throughput × atm (multiplicative shaping along λ — does NOT renormalise)
   for (let i=0;i<W;i++) spectralProfile[i] *= throughputCurve[i]*atmCurve[i];
-  // Normalise so that the integral over the spectral axis is 1 (the spatial distribution then carries Signal_el_total)
-  let spInt = 0; for (let i=0;i<W;i++) spInt += spectralProfile[i];
-  if (spInt > 0) for (let i=0;i<W;i++) spectralProfile[i] *= 1/spInt;
 
-  // Spatial profile: Gaussian sigma PSF_x, centred mid-H, ×slit profile (erf gate of half-length = Slitlength/2/pixel_scale around H/2)
+  // Spatial profile — Gaussian, peak=1 (NOT sum=1, matches Python)
   const spatialProfile = new Float64Array(H);
-  let sSum = 0;
-  for (let j=0;j<H;j++){ spatialProfile[j] = gauss1d(j, H/2, PSF_x); sSum += spatialProfile[j]; }
-  if (sSum > 0) for (let j=0;j<H;j++) spatialProfile[j] *= 1/sSum;
+  for (let j=0;j<H;j++) spatialProfile[j] = gauss1d(j, H/2, PSF_x);
 
-  // Slit profile (only for spectro): erf gate
+  // Slit profile (only for spectro): erf gate, peak=1
   const slitProfile = new Float64Array(H);
   if (spectro){
-    const length = Slitlength/2/pixel_scale; // half-length in detector pixels
+    const length = Slitlength/2/pixel_scale;
     for (let j=0;j<H;j++){
       const dj = j - H/2;
       const a = erf((length - dj)/(Math.SQRT2*Math.max(Rx,0.05)));
       const b = erf((length + dj)/(Math.SQRT2*Math.max(Rx,0.05)));
-      slitProfile[j] = 0.5*(a+b);                  // ranges roughly 0..1
+      slitProfile[j] = 0.5*(a+b);
     }
-    // Normalise to peak 1
     let m = 0; for (let j=0;j<H;j++) if (slitProfile[j]>m) m=slitProfile[j];
     if (m>0) for (let j=0;j<H;j++) slitProfile[j] /= m;
   } else {
     slitProfile.fill(1);
   }
 
-  // Build the noiseless source image (e-/pix/exp)
+  // Build the noiseless source image (e-/pix/exp).
+  // Python: source_im = outer(spectra, spatial × slit) / Σ_smaller_spatial
+  // i.e. it divides by the SUM of a NARROWER Gaussian (sigma = PSF_lambda_pix² / (PSF_λ² + PSF_lambda_pix²)
+  // for the spectral axis, Rx² / (PSF_x² + Rx²) for the spatial axis).
+  // This narrower-PSF normaliser makes the source peak proportional to Signal_el_total / (PSF area).
+  //
+  // We implement the same idea: build the narrower Gaussian and sum it once.
+  const psf_spec_narrow_sigma = Math.max(0.5, PSF_lambda_pix * PSF_lambda_pix / Math.max(0.01, PSF_lam*PSF_lam + PSF_lambda_pix*PSF_lambda_pix));
+  const psf_spat_narrow_sigma = Math.max(0.5, Rx * Rx / Math.max(0.01, PSF_x*PSF_x + Rx*Rx));
+  // Sum of a Gaussian peak=1 narrower-σ on a wide window  ≈ σ × √(2π) when σ is small vs window
+  let sumNarrowSpec = 0;
+  for (let i=0;i<W;i++) sumNarrowSpec += gauss1d(i, W/2, psf_spec_narrow_sigma);
+  let sumNarrowSpat = 0;
+  for (let j=0;j<H;j++) sumNarrowSpat += gauss1d(j, H/2, psf_spat_narrow_sigma);
+  const normFactor = (sumNarrowSpec || 1) * (sumNarrowSpat || 1);
+
+  // Amplitude: Python uses `flux = Signal_el / exposure_time` (e-/s) but the whole image is implicitly
+  // multiplied by exposure_time downstream. In our model we already have Signal_el_total (e-/exp,
+  // total integrated through the slit). So the right amplitude is Signal_el_total / normFactor.
+  const amplitude = Signal_el_total / normFactor;
+
   const source = new Float64Array(W*H);
-  // Signal scaling so that the total integral over (W*H) ≈ Signal_el_total / num_pixels_per_unit
-  // The line is integrated over the spectral axis to Signal_el_total; we put that over the slit (Slitwidth × Slitlength) on the spatial axis.
-  // For simplicity scale spatial × slit so it integrates to 1 in the slit area.
-  let totSpat = 0;
-  for (let j=0;j<H;j++) totSpat += spatialProfile[j]*slitProfile[j];
-  if (totSpat <= 0) totSpat = 1;
   for (let j=0;j<H;j++){
-    const spat = spatialProfile[j]*slitProfile[j]/totSpat * Signal_el_total;  // e-/exp on this row distributed along λ
+    const spat = amplitude * spatialProfile[j] * slitProfile[j];
     for (let i=0;i<W;i++){
       source[j*W + i] = spat * spectralProfile[i];
     }
