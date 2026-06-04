@@ -99,7 +99,7 @@
   /* 2×2 grid of analysis sub-plots: left col = spatial profile + histogram, right col = spectral profile + optics */
   .img-extra{height:45%;min-height:0;flex:none;display:grid;
     grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px;overflow:hidden}
-  .img-extra > svg{display:block;width:100%;height:100%;border:1px solid var(--line);
+  .img-extra > svg{display:block;border:1px solid var(--line);
     border-radius:3px;background:#fff;min-height:0;min-width:0;overflow:hidden}
 
   /* Pixel hover tooltip */
@@ -1759,11 +1759,25 @@ function computeProfiles(sim){
 }
 
 /* Measure an SVG cell's actual pixel size for viewBox. Returns null if cell is collapsed. */
+/* Measure the SVG cell size by inspecting the parent grid's computed track sizes. */
 function svgCellSize(svgNode){
-  const rect = svgNode.getBoundingClientRect();
-  const W = Math.max(80, Math.round(rect.width));
-  // Halve the height: the viewBox was being rendered ~2× the visible cell, so only the top half showed.
-  const H = Math.max(60, Math.round(rect.height / 2));
+  const parent = svgNode.parentNode;
+  const cs = getComputedStyle(parent);
+  // grid-template-columns / -rows are space-separated px values when the layout is computed
+  const colTracks = cs.gridTemplateColumns.split(/\s+/).map(parseFloat).filter(v=>isFinite(v));
+  const rowTracks = cs.gridTemplateRows.split(/\s+/).map(parseFloat).filter(v=>isFinite(v));
+  // Locate which cell THIS svg occupies (by index among children → cell indices)
+  const idx = Array.from(parent.children).indexOf(svgNode);
+  const cols = Math.max(1, colTracks.length);
+  const rows = Math.max(1, rowTracks.length);
+  const colI = idx % cols;
+  const rowI = Math.floor(idx / cols);
+  const colW = colTracks[colI] || 0;
+  const rowH = rowTracks[rowI] || 0;
+  const W = Math.max(80, Math.round(colW - 2));
+  const H = Math.max(60, Math.round(rowH - 2));
+  svgNode.setAttribute("width",  W);
+  svgNode.setAttribute("height", H);
   return { W, H };
 }
 
