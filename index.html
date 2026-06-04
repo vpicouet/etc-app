@@ -86,9 +86,9 @@
     border-bottom:none;border-radius:4px 4px 0 0;cursor:pointer;color:#444}
   .view-tab.active{background:#fff;color:var(--text);font-weight:600}
 
-  /* Spectro image view: fixed proportion between imshow stack (55%) and analysis panels (45%) */
-  .img-view{flex-direction:column;gap:4px;padding:2px;min-height:0}
-  .img-row{display:flex;flex-direction:column;gap:6px;flex:0 0 55%;min-height:0}
+  /* Spectro image view: fixed proportion between imshow stack (top 55%) and analysis panels (bottom 45%) */
+  .img-view{flex-direction:column;gap:4px;padding:2px;min-height:0;height:100%;overflow:hidden}
+  .img-row{display:flex;flex-direction:column;gap:6px;height:55%;min-height:0;flex:none}
   .img-cell{border:1px solid var(--line);border-radius:3px;background:#000;
     position:relative;overflow:hidden;display:block;width:100%;flex:1 1 0;min-height:0}
   .img-cell .cell-title{font-size:11px;color:#fff;background:rgba(0,0,0,0.55);
@@ -97,9 +97,10 @@
   .img-cell canvas{width:100%;height:100%;display:block;image-rendering:pixelated;position:relative;z-index:1;cursor:crosshair}
   .img-cell svg.overlay{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
   /* 2×2 grid of analysis sub-plots: left col = spatial profile + histogram, right col = spectral profile + optics */
-  .img-extra{flex:1 1 45%;min-height:0;display:grid;
-    grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px}
-  .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff;min-height:0;min-width:0}
+  .img-extra{height:45%;min-height:0;flex:none;display:grid;
+    grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px;overflow:hidden}
+  .img-extra > svg{display:block;width:100%;height:100%;border:1px solid var(--line);
+    border-radius:3px;background:#fff;min-height:0;min-width:0;overflow:hidden}
 
   /* Pixel hover tooltip */
   #pixtip{position:fixed;pointer-events:none;background:rgba(0,0,0,0.85);color:#fff;
@@ -1757,12 +1758,21 @@ function computeProfiles(sim){
   return { specS, specK, spatS, spatK };
 }
 
+/* Measure an SVG cell's actual pixel size for viewBox. Returns null if cell is collapsed. */
+function svgCellSize(svgNode){
+  const rect = svgNode.getBoundingClientRect();
+  const W = Math.max(80, Math.round(rect.width));
+  const H = Math.max(60, Math.round(rect.height));
+  return { W, H };
+}
+
 /* Draw a single-line+stack curve on its own SVG, with x-axis using `xValues`.
-   Uses a fixed reference viewBox (400×200) — CSS scales it to fit the grid cell. */
+   viewBox is set to the SVG's actual rendered pixel size to avoid scaling glitches. */
 function drawCurveSvg(svgId, single, stack, xValues, title, xLabel){
   const svg = d3.select("#"+svgId);
   svg.selectAll("*").remove();
-  const W = 400, H = 200;
+  const sz = svgCellSize(svg.node());
+  const W = sz.W, H = sz.H;
   svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:38,r:8,t:16,b:22};
 
@@ -1791,7 +1801,8 @@ function drawProfiles(sim){
 function drawOptics(sim, pa){
   const svg = d3.select("#svg-optics");
   svg.selectAll("*").remove();
-  const W = 400, H = 200;
+  const sz = svgCellSize(svg.node());
+  const W = sz.W, H = sz.H;
   svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:38, r:8, t:14, b:22};
 
@@ -1848,7 +1859,8 @@ function drawOptics(sim, pa){
 function drawHistogram(sim){
   const svg = d3.select("#svg-hist");
   svg.selectAll("*").remove();
-  const W = 400, H = 200;
+  const sz = svgCellSize(svg.node());
+  const W = sz.W, H = sz.H;
   svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:36,r:8,t:16,b:20};
   const nBins = 60;
@@ -2053,7 +2065,8 @@ function drawIfsRect(){
 function drawIfsSpectrum(){
   const svg = d3.select("#svg-ifs-spec");
   svg.selectAll("*").remove();
-  const W = 400, H = 200;
+  const sz = svgCellSize(svg.node());
+  const W = sz.W, H = sz.H;
   svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:42,r:8,t:16,b:24};
 
@@ -2159,7 +2172,8 @@ function setView(view){
   document.getElementById("plot").classList.toggle("active", view==="snr");
   document.getElementById("plot-img").classList.toggle("active", view==="img");
   document.getElementById("plot-ifs").classList.toggle("active", view==="ifs");
-  scheduleUpdate();
+  // Wait two RAFs so the just-shown container has time to lay out before we measure its size for the SVG viewBoxes
+  requestAnimationFrame(()=> requestAnimationFrame(()=> scheduleUpdate()));
 }
 
 /* Show/hide the IFS tab depending on the current instrument's dimensions column. */
