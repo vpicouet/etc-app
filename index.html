@@ -96,6 +96,11 @@
   .img-extra{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff}
 
+  /* Pixel hover tooltip */
+  #pixtip{position:fixed;pointer-events:none;background:rgba(0,0,0,0.85);color:#fff;
+    font-size:11px;padding:4px 7px;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    z-index:9999;white-space:pre;display:none;line-height:1.35}
+
   details.sheet{margin-top:auto;flex:0 0 auto}
   details.sheet summary{cursor:pointer;color:var(--muted);font-size:11px}
   details.sheet input{width:100%;margin-top:4px;font-size:11px;padding:2px 4px;
@@ -113,6 +118,8 @@
 </style>
 </head>
 <body>
+
+<div id="pixtip"></div>
 
 <header>
   <h1>Generic ETC</h1>
@@ -170,8 +177,8 @@
       <button id="reset" title="Reset all parameters to their default values (does not change the instrument).">↺</button>
     </div>
 
-    <details class="acc" id="dep-acc">
-      <summary>Parameter dependencies</summary>
+    <details class="acc" id="dep-acc" open>
+      <summary>Parameter dependencies (lock formulas)</summary>
       <div class="acc-body" id="dep-list"></div>
     </details>
 
@@ -182,12 +189,10 @@
 
     <div id="accordions"></div>
 
-    <details class="sheet">
-      <summary>Data source (Google Sheet)</summary>
-      <input id="sheet_id" value="1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU"/>
-      <input id="sheet_name" value="instruments.csv"/>
-      <button id="reload" style="margin-top:4px">Reload</button>
-    </details>
+    <!-- Hidden GSheet inputs (still read by loadInstruments). The full "Data source" UI was removed per request. -->
+    <input id="sheet_id" type="hidden" value="1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU"/>
+    <input id="sheet_name" type="hidden" value="instruments.csv"/>
+    <button id="reload" style="display:none"></button>
   </div>
 </div>
 
@@ -1053,10 +1058,10 @@ function drawPlot(res){
   const allY0 = noiseSeries.flatMap(s=>s.y).concat(quadSum);
   drawPanel(svg, p0, x, xScale, allY0, ylog, "Noise (e-/exp)", g=>{
     noiseSeries.forEach(s=>{
-      g.append("path").datum(s.y).attr("fill","none").attr("stroke",s.color).attr("stroke-width",1.6)
+      g.append("path").datum(s.y).attr("fill","none").attr("stroke",s.color).attr("stroke-width",2.8)
         .attr("d", lineGen(x, p0, xScale, allY0, ylog));
     });
-    g.append("path").datum(quadSum).attr("fill","none").attr("stroke","#000").attr("stroke-width",1.8).attr("stroke-opacity",0.7)
+    g.append("path").datum(quadSum).attr("fill","none").attr("stroke","#000").attr("stroke-width",3.4).attr("stroke-opacity",0.7)
       .attr("d", lineGen(x, p0, xScale, allY0, ylog));
     legendBlock(g, p0, [
       ...noiseSeries.map(s=>({name:`${s.name}: ${fmtNum(s.y[iCur])}`, color:s.color})),
@@ -1220,16 +1225,28 @@ function viridisAt(t){ // t in [0,1]
   return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
 }
 
-function rasterizeImage(canvas, data, W, H, vmin, vmax){
+function rasterizeImage(canvas, data, W, H, vmin, vmax, useLog){
   // data[j*W+i] in row-major (j = spatial / row, i = spectral / col)
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d");
   const img = ctx.createImageData(W, H);
-  const range = (vmax - vmin) || 1;
+  let tFn;
+  if (useLog){
+    // Symlog mapping: shift so the floor is positive, then take log10.
+    // linthresh chosen as max(1, |vmin|+1) so log(vmin) = log(1) = 0.
+    const offset = Math.max(1, -vmin + 1);
+    const lmin = Math.log10(vmin + offset);
+    const lmax = Math.log10(vmax + offset);
+    const range = (lmax - lmin) || 1;
+    tFn = v => (Math.log10(v + offset) - lmin) / range;
+  } else {
+    const range = (vmax - vmin) || 1;
+    tFn = v => (v - vmin)/range;
+  }
   for (let j=0;j<H;j++){
     for (let i=0;i<W;i++){
       const v = data[j*W+i];
-      const t = (v - vmin)/range;
+      const t = isFinite(v) ? tFn(v) : 0;
       const [r,g,b] = viridisAt(t);
       const k = (j*W+i)*4;
       img.data[k] = r; img.data[k+1] = g; img.data[k+2] = b; img.data[k+3] = 255;
@@ -1273,10 +1290,14 @@ function drawImageView(){
   const cvK = document.getElementById("cv-stack");
   const vminS = percentile(sim.single, 0.01), vmaxS = percentile(sim.single, 0.99);
   const vminK = percentile(sim.stack,  0.01), vmaxK = percentile(sim.stack,  0.99);
-  rasterizeImage(cvS, sim.single, sim.W, sim.H, vminS, vmaxS);
-  rasterizeImage(cvK, sim.stack,  sim.W, sim.H, vminK, vmaxK);
+  const ylog = document.getElementById("ylog").checked;
+  rasterizeImage(cvS, sim.single, sim.W, sim.H, vminS, vmaxS, ylog);
+  rasterizeImage(cvK, sim.stack,  sim.W, sim.H, vminK, vmaxK, ylog);
   drawSlitOverlay("ov-single", pa, sim);
   drawSlitOverlay("ov-stack",  pa, sim);
+  // Cache the data for pixel-hover lookup
+  STATE.imgCache = { single: sim.single, stack: sim.stack, W: sim.W, H: sim.H, sim };
+  attachImageHover();
 
   document.getElementById("img-single-title").textContent =
     `Single exposure (${sim.W}×${sim.H} pix = ${(sim.W*sim.xPhys_per_pix).toFixed(0)}Å × ${(sim.H*sim.yPhys_per_pix).toFixed(1)}″) — slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″`;
@@ -1287,6 +1308,48 @@ function drawImageView(){
   drawProfiles(sim);
   // ===== Histogram SVG =====
   drawHistogram(sim);
+}
+
+function attachImageHover(){
+  if (STATE._hoverAttached) return;
+  STATE._hoverAttached = true;
+  const tip = document.getElementById("pixtip");
+  function wire(canvasId, label){
+    const cv = document.getElementById(canvasId);
+    cv.addEventListener("mousemove", (e)=>{
+      const cache = STATE.imgCache; if (!cache) { tip.style.display="none"; return; }
+      const rect = cv.getBoundingClientRect();
+      const fx = (e.clientX - rect.left) / rect.width;
+      const fy = (e.clientY - rect.top)  / rect.height;
+      if (fx<0||fx>1||fy<0||fy>1){ tip.style.display="none"; return; }
+      const i = Math.max(0, Math.min(cache.W-1, Math.floor(fx*cache.W)));
+      const j = Math.max(0, Math.min(cache.H-1, Math.floor(fy*cache.H)));
+      const data = canvasId==="cv-single" ? cache.single : cache.stack;
+      const v = data[j*cache.W + i];
+      // Physical coords
+      const sim = cache.sim;
+      const lam = sim.wavelengths[i];                                  // Å
+      const dy_arcsec = (j - cache.H/2) * sim.yPhys_per_pix;           // ″
+      const dlam = (i - cache.W/2) * sim.xPhys_per_pix;                // Å from centre
+      tip.textContent =
+        `${label} (col ${i}, row ${j})\n` +
+        `value : ${v.toFixed(3)} e-\n` +
+        `λ     : ${lam.toFixed(2)} Å  (Δλ ${dlam>=0?"+":""}${dlam.toFixed(2)} Å)\n` +
+        `spat  : ${dy_arcsec>=0?"+":""}${dy_arcsec.toFixed(2)}″ from slit centre`;
+      tip.style.display = "block";
+      // Position near cursor with edge protection
+      const pad = 12;
+      let x = e.clientX + pad, y = e.clientY + pad;
+      const tipBox = tip.getBoundingClientRect();
+      if (x + tipBox.width  > window.innerWidth)  x = e.clientX - pad - tipBox.width;
+      if (y + tipBox.height > window.innerHeight) y = e.clientY - pad - tipBox.height;
+      tip.style.left = x + "px";
+      tip.style.top  = y + "px";
+    });
+    cv.addEventListener("mouseleave", ()=>{ tip.style.display="none"; });
+  }
+  wire("cv-single", "Single exposure");
+  wire("cv-stack",  "Stacked");
 }
 
 function drawSlitOverlay(svgId, pa, sim){
@@ -1309,8 +1372,7 @@ function drawSlitOverlay(svgId, pa, sim){
   svg.append("rect").attr("x", Math.max(0,x0)).attr("y", Math.max(0,y0))
     .attr("width", w).attr("height", h)
     .attr("fill","none").attr("stroke","#ff3")
-    .attr("stroke-width", Math.max(0.6, sim.H*0.012))
-    .attr("stroke-dasharray", `${sim.W*0.012} ${sim.W*0.008}`);
+    .attr("stroke-width", Math.max(0.6, sim.H*0.012));
   // Label above the slit rectangle
   svg.append("text")
     .attr("x", Math.max(2, x0))
