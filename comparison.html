@@ -11,7 +11,6 @@
     --radius:6px; --radius-sm:3px;
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace;
-    /* Light defaults */
     --bg:#f7f7f7; --bg-alt:#f0f0f0; --panel:#ffffff;
     --line:#e2e2e2; --line-strong:#cccccc;
     --text:#1a1a1a; --text-soft:#444; --muted:#666;
@@ -47,7 +46,7 @@
     border:1px solid var(--line);color:var(--text);border-radius:var(--radius-sm);cursor:pointer}
   #theme-toggle:hover{background:var(--bg-alt)}
 
-  /* Main grid: scatter row | controls strip | radars row — fits exactly the viewport */
+  /* Main grid: scatter row | controls strip | radars row */
   .app{
     display:grid;
     grid-template-rows: minmax(0,1fr) auto minmax(0,1fr);
@@ -60,8 +59,8 @@
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
     box-shadow:var(--shadow-elev-1);min-height:0;min-width:0;overflow:hidden;display:flex}
 
-  /* SCATTER ROW: plot left, controls right */
-  .row-scatter{display:grid;grid-template-columns: minmax(0,1fr) 230px;gap:6px;min-height:0}
+  /* SCATTER ROW */
+  .row-scatter{display:grid;grid-template-columns: minmax(0,1fr) 220px;gap:6px;min-height:0}
   .row-scatter > .panel{padding:0}
   .row-scatter .ctl{padding:8px 10px;flex-direction:column;gap:6px;font-size:12px;overflow:auto}
   .row-scatter .ctl label{display:flex;align-items:center;gap:6px;color:var(--text-soft)}
@@ -70,28 +69,29 @@
   .row-scatter .ctl .check-row{display:flex;gap:10px;align-items:center;font-size:11.5px;color:var(--text-soft)}
   .row-scatter .ctl .check-row input[type=checkbox]{margin:0}
   .row-scatter .ctl .ctl-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;font-weight:600}
-  .row-scatter .ctl .hint{font-size:10.5px;color:var(--muted);line-height:1.35;margin-top:4px}
-  .row-scatter .ctl .hint b{color:var(--text-soft)}
 
-  /* CONTROLS STRIP: instrument multi-select */
-  .row-select{display:flex;align-items:center;gap:10px;padding:6px 10px;flex-wrap:wrap}
-  .row-select label{font-size:12px;color:var(--muted);flex:0 0 auto}
-  .row-select select{font:12px var(--font-ui);padding:2px 4px;
+  /* SELECT STRIP — two columns (instruments / detectors), each = picker + chips */
+  .row-select{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:6px 10px;flex-direction:row;align-items:stretch;flex-wrap:nowrap;flex:none}
+  .picker-group{display:flex;flex-direction:column;gap:4px;min-width:0;overflow:hidden}
+  .picker-header{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted)}
+  .picker-header label{font-weight:600;color:var(--text-soft);font-size:11px;text-transform:uppercase;letter-spacing:0.05em;flex:0 0 auto}
+  .picker-header select{font:12px var(--font-ui);padding:2px 4px;
     border:1px solid var(--line-strong);border-radius:3px;background:var(--panel);color:var(--text);
-    min-width:220px;height:30px}
-  .row-select .chips{display:flex;gap:5px;flex-wrap:wrap;flex:1 1 auto}
+    flex:1 1 auto;min-width:0}
+  .picker-header .clear{font-size:11px;color:var(--muted);cursor:pointer;flex:0 0 auto;padding:2px 6px;border-radius:3px;border:1px solid transparent}
+  .picker-header .clear:hover{color:var(--accent-2);border-color:var(--line)}
+  .chips{display:flex;gap:5px;flex-wrap:wrap;min-height:18px}
   .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;
-    background:var(--bg-alt);border:1px solid var(--line);border-radius:11px;padding:1px 7px;color:var(--text)}
+    background:var(--bg-alt);border:1px solid var(--line);border-radius:11px;padding:1px 4px 1px 7px;color:var(--text);max-width:100%}
   .chip .dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 8px}
-  .chip .x{cursor:pointer;color:var(--muted);font-weight:600;padding:0 2px}
+  .chip .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip .x{cursor:pointer;color:var(--muted);font-weight:600;padding:0 3px;flex:0 0 auto}
   .chip .x:hover{color:var(--accent-2)}
-  .row-select .hint{font-size:10.5px;color:var(--muted);font-style:italic;flex:0 0 auto}
 
   /* RADARS ROW */
   .row-radars{display:grid;grid-template-columns:1fr 1fr;gap:6px;min-height:0}
   .row-radars > .panel{padding:4px}
 
-  /* SVG plots stretch to fill their parent .panel */
   .row-scatter > .panel > svg,
   .row-radars  > .panel > svg{
     display:block;width:100%;height:100%;background:var(--plot-bg);min-width:0;min-height:0
@@ -107,6 +107,12 @@
   .radar-poly{fill-opacity:0.18;stroke-width:1.8;stroke-linejoin:round}
   .radar-title{font-size:11px;fill:var(--text-soft);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.05em}
 
+  /* Hover tooltip (shared with all SVGs on the page) */
+  #hover{position:fixed;pointer-events:none;background:rgba(0,0,0,0.88);color:#fff;
+    font-size:11px;padding:5px 8px;border-radius:4px;font-family:var(--font-mono);
+    z-index:9999;white-space:pre;display:none;line-height:1.4;
+    border:1px solid rgba(255,255,255,0.08)}
+
   #status{position:absolute;bottom:8px;right:10px;font-size:10.5px;color:var(--muted);
     font-family:var(--font-mono);padding:2px 6px;background:rgba(0,0,0,0);pointer-events:none}
   #status.err{color:#c00}
@@ -118,11 +124,14 @@
     .row-scatter > .panel:first-child{height:60vh}
     .row-radars{grid-template-columns:1fr}
     .row-radars > .panel{height:50vh}
+    .row-select{grid-template-columns:1fr}
   }
 </style>
 <link id="theme-css" rel="stylesheet" href="themes/twilight.css">
 </head>
 <body>
+
+<div id="hover"></div>
 
 <header>
   <h1>Generic ETC</h1>
@@ -147,23 +156,31 @@
       <label>Size <select id="sc-size"></select></label>
       <label>Color <select id="sc-color"></select></label>
       <div class="check-row">
-        <label><input type="checkbox" id="sc-xlog"> x-log</label>
-        <label><input type="checkbox" id="sc-ylog"> y-log</label>
+        <label><input type="checkbox" id="sc-xlog" checked> x-log</label>
+        <label><input type="checkbox" id="sc-ylog" checked> y-log</label>
         <label><input type="checkbox" id="sc-names" checked> names</label>
-      </div>
-      <div class="hint">
-        Most useful trade-study axes: <b>PSF_RMS_det</b>, <b>Spectral_resolution</b>,
-        <b>wavelength</b>, <b>Effective_area</b>, <b>Collecting_area</b>, <b>FOV_size</b>, <b>Grasp</b>.
       </div>
     </div>
   </div>
 
-  <!-- ROW 2 — Instrument multi-select strip -->
+  <!-- ROW 2 — Two pickers side by side -->
   <div class="panel row-select">
-    <label>Instruments <small style="color:var(--muted);font-weight:400">(⌘/Ctrl-click to add)</small></label>
-    <select id="instr-multi" multiple size="3"></select>
-    <div id="instr-chips" class="chips"></div>
-    <span class="hint">Radars below normalise 0-1 on this set.</span>
+    <div class="picker-group">
+      <div class="picker-header">
+        <label>Instruments</label>
+        <select id="instr-picker"><option value="">+ add instrument…</option></select>
+        <span id="instr-clear" class="clear" title="Clear selection">clear</span>
+      </div>
+      <div id="instr-chips" class="chips"></div>
+    </div>
+    <div class="picker-group">
+      <div class="picker-header">
+        <label>Detectors</label>
+        <select id="det-picker"><option value="">+ add detector…</option></select>
+        <span id="det-clear" class="clear" title="Clear selection">clear</span>
+      </div>
+      <div id="det-chips" class="chips"></div>
+    </div>
   </div>
 
   <!-- ROW 3 — Radars -->
@@ -200,6 +217,23 @@ function applyMode(mode){
 function cssVar(name, fb){ return getComputedStyle(document.body).getPropertyValue(name).trim() || fb; }
 
 /* ============================================================================
+   FLOATING HOVER TOOLTIP
+   ========================================================================== */
+const tip = document.getElementById("hover");
+function showTip(html, e){
+  tip.textContent = html;
+  tip.style.display = "block";
+  const pad = 12;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  const box = tip.getBoundingClientRect();
+  if (x + box.width  > window.innerWidth)  x = e.clientX - pad - box.width;
+  if (y + box.height > window.innerHeight) y = e.clientY - pad - box.height;
+  tip.style.left = x + "px";
+  tip.style.top  = y + "px";
+}
+function hideTip(){ tip.style.display = "none"; }
+
+/* ============================================================================
    DATA
    ========================================================================== */
 const SHEET_ID   = "1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU";
@@ -207,6 +241,7 @@ const SHEET_NAME = "instruments.csv";
 
 const INSTR = [];
 
+// Detectors block — values mirror the right-hand block of the comparison sheet.
 const DETECTORS = [
   { name:"EMCCD201",     Efficiency:0.4091, background:0.7, Noise_per_exp:null, pix_size:13, QE:0.7 },
   { name:"EMCCD311",     Efficiency:null,   background:null, Noise_per_exp:null, pix_size:null, QE:null },
@@ -238,8 +273,7 @@ async function loadInstruments(){
     }
   }
   for (const n of instrNames){
-    const d = dict[n];
-    INSTR.push({ name:n, raw:d, derived: deriveMetrics(d) });
+    INSTR.push({ name:n, raw:dict[n], derived: deriveMetrics(dict[n]) });
   }
 }
 
@@ -266,17 +300,13 @@ function deriveMetrics(d){
   const dimensions  = num("dimensions");
   const pixel_size  = num("pixel_size");
 
-  const E2E = (isFinite(Throughput) && isFinite(QE) && isFinite(Atmosphere))
-              ? Throughput * QE * Atmosphere : NaN;
-  const Aeff = (isFinite(E2E) && isFinite(Coll_m2))
-               ? E2E * Coll_m2 * 1e4 : NaN;
+  const E2E = (isFinite(Throughput) && isFinite(QE) && isFinite(Atmosphere)) ? Throughput*QE*Atmosphere : NaN;
+  const Aeff = (isFinite(E2E) && isFinite(Coll_m2)) ? E2E*Coll_m2*1e4 : NaN;
   const SpatialRes = isFinite(PSF_det) ? 1/PSF_det : NaN;
-  const RN_eff = (isFinite(RN) && isFinite(EM) && EM>0) ? RN / EM : RN;
+  const RN_eff = (isFinite(RN) && isFinite(EM) && EM>0) ? RN/EM : RN;
   const dark_per_exp  = (isFinite(Dark)   && isFinite(texp)) ? Dark   * texp/3600 : 0;
   const bextra_per_exp= (isFinite(Bextra) && isFinite(texp)) ? Bextra * texp/3600 : 0;
-  const var_per_frame = (isFinite(CIC)?CIC:0)
-                      + (isFinite(RN_eff)?RN_eff*RN_eff:0)
-                      + dark_per_exp + bextra_per_exp;
+  const var_per_frame = (isFinite(CIC)?CIC:0) + (isFinite(RN_eff)?RN_eff*RN_eff:0) + dark_per_exp + bextra_per_exp;
   const det_noise_per_frame = isFinite(var_per_frame) ? Math.sqrt(Math.max(0,var_per_frame)) : NaN;
   let det_noise_per_time = NaN;
   if (isFinite(det_noise_per_frame) && isFinite(texp) && isFinite(tro)){
@@ -307,16 +337,45 @@ function deriveMetrics(d){
 }
 
 /* ============================================================================
-   SVG SIZING HELPER — measure SVG parent at draw time for the viewBox.
+   SVG SIZING HELPER
    ========================================================================== */
 function svgSize(svgNode){
   const parent = svgNode.parentNode;
   const rect = parent.getBoundingClientRect();
-  // Subtract 2px for the panel border. Floor to avoid sub-pixel jitter.
   return {
     W: Math.max(120, Math.floor(rect.width  - 2)),
     H: Math.max(120, Math.floor(rect.height - 2))
   };
+}
+
+/* ============================================================================
+   AXIS TICKS — log-axis tick filter (only 1, 2, 5 × 10^k → no overlap)
+   ========================================================================== */
+function logTicksOneTwoFive(scale, targetCount){
+  // Generate all (1,2,5) × 10^k inside the domain, then keep only enough to roughly hit targetCount.
+  const [a,b] = scale.domain();
+  if (!(a>0) || !(b>a)) return [];
+  const out = [];
+  const la = Math.floor(Math.log10(a));
+  const lb = Math.ceil(Math.log10(b));
+  for (let k=la; k<=lb; k++){
+    for (const m of [1,2,5]){
+      const v = m*Math.pow(10,k);
+      if (v >= a && v <= b) out.push(v);
+    }
+  }
+  // Downsample to roughly targetCount
+  if (out.length > targetCount){
+    const step = Math.ceil(out.length / targetCount);
+    return out.filter((_,i)=>i%step===0);
+  }
+  return out;
+}
+function fmtTick(v){
+  const a = Math.abs(v);
+  if (a===0) return "0";
+  if (a >= 1e4 || a < 1e-3) return d3.format(".0~e")(v);
+  return d3.format(".2~g")(v);
 }
 
 /* ============================================================================
@@ -366,7 +425,7 @@ function drawScatter(){
   const showNames = document.getElementById("sc-names").checked;
 
   const pts = INSTR.map(i => ({name:i.name, x:valueOf(i,xk), y:valueOf(i,yk), s:valueOf(i,sk), c:valueOf(i,ck)}))
-                   .filter(p => isFinite(p.x) && isFinite(p.y));
+                   .filter(p => isFinite(p.x) && isFinite(p.y) && (!xlog || p.x>0) && (!ylog || p.y>0));
   if (!pts.length){
     svg.append("text").attr("x", W/2).attr("y", H/2).attr("text-anchor","middle")
        .attr("class","instr-name").text("No instruments with both axes available");
@@ -374,32 +433,30 @@ function drawScatter(){
   }
   const xExt = d3.extent(pts.map(p=>p.x));
   const yExt = d3.extent(pts.map(p=>p.y));
-  const xMin = (xlog && xExt[0]<=0) ? (pts.map(p=>p.x).filter(v=>v>0).sort((a,b)=>a-b)[0]||1e-3) : xExt[0];
-  const xMax = xExt[1];
-  const yMin = (ylog && yExt[0]<=0) ? (pts.map(p=>p.y).filter(v=>v>0).sort((a,b)=>a-b)[0]||1e-3) : yExt[0];
-  const yMax = yExt[1];
-  const xs = (xlog && xMin>0)
-    ? d3.scaleLog().domain([xMin, xMax]).range([m.l, W-m.r])
-    : d3.scaleLinear().domain([xMin, xMax]).range([m.l, W-m.r]);
-  const ys = (ylog && yMin>0)
-    ? d3.scaleLog().domain([yMin, yMax]).range([H-m.b, m.t])
-    : d3.scaleLinear().domain([yMin, yMax]).range([H-m.b, m.t]);
-  const sValues = pts.map(p=>p.s).filter(isFinite);
-  const sExt = d3.extent(sValues);
+  const xs = xlog
+    ? d3.scaleLog().domain([Math.max(xExt[0], 1e-12), xExt[1]]).range([m.l, W-m.r])
+    : d3.scaleLinear().domain([xExt[0], xExt[1]]).range([m.l, W-m.r]);
+  const ys = ylog
+    ? d3.scaleLog().domain([Math.max(yExt[0], 1e-12), yExt[1]]).range([H-m.b, m.t])
+    : d3.scaleLinear().domain([yExt[0], yExt[1]]).range([H-m.b, m.t]);
+  const sExt = d3.extent(pts.map(p=>p.s).filter(isFinite));
   const sScale = (isFinite(sExt[0]) && sExt[1]>sExt[0])
     ? d3.scaleSqrt().domain([sExt[0], sExt[1]]).range([4, 14])
     : (()=>6);
-  const cValues = pts.map(p=>p.c).filter(isFinite);
-  const cExt = d3.extent(cValues);
+  const cExt = d3.extent(pts.map(p=>p.c).filter(isFinite));
   const cScale = (isFinite(cExt[0]) && cExt[1]>cExt[0])
     ? d3.scaleSequential(d3.interpolateViridis).domain([cExt[0], cExt[1]])
     : (()=>cssVar("--accent","#348ABD"));
 
-  const fmt = d3.format(".2~g");
-  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`)
-     .call(d3.axisBottom(xs).ticks(6).tickFormat(fmt));
-  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`)
-     .call(d3.axisLeft(ys).ticks(6).tickFormat(fmt));
+  // Axes with 1-2-5 log filtering
+  const xAxis = d3.axisBottom(xs).tickFormat(fmtTick);
+  const yAxis = d3.axisLeft  (ys).tickFormat(fmtTick);
+  if (xlog) xAxis.tickValues(logTicksOneTwoFive(xs, 6));
+  else      xAxis.ticks(6);
+  if (ylog) yAxis.tickValues(logTicksOneTwoFive(ys, 6));
+  else      yAxis.ticks(6);
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(xAxis);
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(yAxis);
   svg.append("text").attr("x", (W+m.l-m.r)/2).attr("y", H-4).attr("text-anchor","middle").attr("class","ax-lbl").text(xk);
   svg.append("text").attr("transform",`translate(14,${(H+m.t-m.b)/2}) rotate(-90)`).attr("text-anchor","middle").attr("class","ax-lbl").text(yk);
 
@@ -410,8 +467,13 @@ function drawScatter(){
     const col = (typeof cScale==="function") ? cScale(isFinite(p.c)?p.c:(cExt[0]||0)) : cssVar("--accent","#348ABD");
     const circle = g.append("circle").attr("cx", cx).attr("cy", cy).attr("r", rad)
       .attr("fill", col).attr("fill-opacity", 0.78)
-      .attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width", 0.6);
-    circle.append("title").text(`${p.name}\n${xk} = ${fmt(p.x)}\n${yk} = ${fmt(p.y)}\n${sk} = ${isFinite(p.s)?fmt(p.s):"—"}\n${ck} = ${isFinite(p.c)?fmt(p.c):"—"}`);
+      .attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width", 0.6)
+      .style("cursor","pointer");
+    circle.on("mouseenter mousemove", function(e){
+      showTip(
+        `${p.name}\n${xk.padEnd(16)} ${fmtTick(p.x)}\n${yk.padEnd(16)} ${fmtTick(p.y)}\n` +
+        `${sk.padEnd(16)} ${isFinite(p.s)?fmtTick(p.s):"—"}\n${ck.padEnd(16)} ${isFinite(p.c)?fmtTick(p.c):"—"}`, e);
+    }).on("mouseleave", hideTip);
     if (showNames){
       g.append("text").attr("class","instr-name").attr("x", cx + rad + 2).attr("y", cy + 3).text(p.name);
     }
@@ -419,47 +481,58 @@ function drawScatter(){
 }
 
 /* ============================================================================
-   INSTRUMENT MULTI-SELECT
+   PICKERS (instruments + detectors)
+   Each picker stores its current selection in a small ordered Set-like array
+   (keeps insertion order so chip colors are stable).
    ========================================================================== */
-function fillInstrumentMulti(defaults){
-  const sel = document.getElementById("instr-multi");
-  while (sel.firstChild) sel.removeChild(sel.firstChild);
-  INSTR.forEach(i => {
-    const opt = document.createElement("option");
-    opt.value = i.name; opt.textContent = i.name;
-    if (defaults.includes(i.name)) opt.selected = true;
-    sel.appendChild(opt);
+const SEL_INSTR = [];   // selected instrument names
+const SEL_DET   = [];   // selected detector names
+
+function fillPickerOptions(selectId, names){
+  const sel = document.getElementById(selectId);
+  // keep the first <option value=""> placeholder, drop the rest
+  while (sel.children.length > 1) sel.removeChild(sel.lastChild);
+  names.forEach(n => {
+    const o = document.createElement("option");
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
   });
-  sel.addEventListener("change", ()=>{ renderChips(); requestAnimationFrame(()=>{ drawInstrRadar(); drawDetRadar(); }); });
 }
-function selectedInstruments(){
-  const sel = document.getElementById("instr-multi");
-  return Array.from(sel.selectedOptions).map(o => o.value).slice(0, 8);
+
+function wirePicker(selectId, store, chipsId, onChange){
+  const sel = document.getElementById(selectId);
+  sel.addEventListener("change", e => {
+    const v = sel.value;
+    sel.value = "";   // reset to placeholder
+    if (!v) return;
+    if (!store.includes(v)){
+      store.push(v);
+      if (store.length > 8) store.shift();    // cap at 8 entries
+      renderChips(chipsId, store, onChange);
+      onChange();
+    }
+  });
 }
-function deselectInstrument(name){
-  const sel = document.getElementById("instr-multi");
-  Array.from(sel.options).forEach(o => { if (o.value === name) o.selected = false; });
-  renderChips();
-  requestAnimationFrame(()=>{ drawInstrRadar(); drawDetRadar(); });
-}
-function renderChips(){
-  const root = document.getElementById("instr-chips");
+
+function renderChips(chipsId, store, onChange){
+  const root = document.getElementById(chipsId);
   while (root.firstChild) root.removeChild(root.firstChild);
-  const sel = selectedInstruments();
   const cmap = d3.schemeTableau10;
-  sel.forEach((n,i)=>{
+  store.forEach((n, i) => {
     const chip = document.createElement("span");
     chip.className = "chip";
     const dot = document.createElement("span");
     dot.className = "dot";
     dot.style.background = cmap[i % cmap.length];
-    chip.appendChild(dot);
-    chip.appendChild(document.createTextNode(n));
+    const nameEl = document.createElement("span");
+    nameEl.className = "name"; nameEl.textContent = n;
     const x = document.createElement("span");
-    x.className = "x"; x.textContent = "×";
-    x.title = "Deselect";
-    x.addEventListener("click", ()=>deselectInstrument(n));
-    chip.appendChild(x);
+    x.className = "x"; x.textContent = "×"; x.title = "Remove";
+    x.addEventListener("click", ()=>{
+      const idx = store.indexOf(n);
+      if (idx>=0){ store.splice(idx, 1); renderChips(chipsId, store, onChange); onChange(); }
+    });
+    chip.appendChild(dot); chip.appendChild(nameEl); chip.appendChild(x);
     root.appendChild(chip);
   });
 }
@@ -505,7 +578,7 @@ function buildRadarValues(metrics, getValue, selection){
   });
 }
 
-function drawRadar(svgId, title, metrics, getValue, selection){
+function drawRadar(svgId, title, metrics, getValue, selection, displayNames){
   const svg = d3.select("#"+svgId);
   const node = svg.node();
   const {W, H} = svgSize(node);
@@ -519,7 +592,7 @@ function drawRadar(svgId, title, metrics, getValue, selection){
 
   if (!selection.length){
     svg.append("text").attr("x", cx).attr("y", cy).attr("text-anchor","middle").attr("class","instr-name")
-       .text("Pick at least one instrument above");
+       .text("Pick at least one entry above");
     return;
   }
 
@@ -533,8 +606,7 @@ function drawRadar(svgId, title, metrics, getValue, selection){
       const a = (i/N)*2*Math.PI - Math.PI/2;
       pts.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
     }
-    svg.append("polygon").attr("class","radar-axis")
-       .attr("points", pts.map(p=>p.join(",")).join(" "));
+    svg.append("polygon").attr("class","radar-axis").attr("points", pts.map(p=>p.join(",")).join(" "));
   }
   for (let i=0;i<N;i++){
     const a = (i/N)*2*Math.PI - Math.PI/2;
@@ -547,41 +619,39 @@ function drawRadar(svgId, title, metrics, getValue, selection){
   selection.forEach((name, idx)=>{
     const col = cmap[idx % cmap.length];
     const pts = [];
+    const valuesForTip = [];
     for (let i=0;i<N;i++){
       const s = data[i].scores[idx];
+      valuesForTip.push(`${data[i].label.padEnd(18)} ${s==null?"—":d3.format(".2~f")(s)}`);
       if (s==null) continue;
       const r = R * Math.max(0, Math.min(1, s));
       const a = (i/N)*2*Math.PI - Math.PI/2;
       pts.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
     }
     if (pts.length<2) return;
-    svg.append("polygon").attr("class","radar-poly")
+    const poly = svg.append("polygon").attr("class","radar-poly")
        .attr("points", pts.map(p=>p.join(",")).join(" "))
-       .attr("fill", col).attr("stroke", col)
-       .append("title").text(name);
+       .attr("fill", col).attr("stroke", col).style("cursor","pointer");
+    const dispName = displayNames ? displayNames(name) : name;
+    poly.on("mouseenter mousemove", function(e){
+      showTip(`${dispName}\n` + valuesForTip.join("\n"), e);
+    }).on("mouseleave", hideTip);
   });
 }
 
 function drawInstrRadar(){
-  const sel = selectedInstruments();
   drawRadar("radar-instr", "Instrument performance", RADAR_INSTR_METRICS,
             (name, key)=>{
               const inst = INSTR.find(i => i.name===name);
               return inst ? inst.derived[key] : NaN;
-            }, sel);
+            }, SEL_INSTR);
 }
-
 function drawDetRadar(){
-  const sel = selectedInstruments();
   drawRadar("radar-det", "Detector profile", RADAR_DET_METRICS,
             (name, key)=>{
-              const inst = INSTR.find(i => i.name===name);
-              if (!inst) return NaN;
-              const dtype = inst.raw["Detector_type"];
-              if (typeof dtype !== "string") return NaN;
-              const det = DETECTORS.find(d => d.name === dtype.trim());
+              const det = DETECTORS.find(d => d.name === name);
               return det ? det[key] : NaN;
-            }, sel);
+            }, SEL_DET);
 }
 
 /* ============================================================================
@@ -600,6 +670,7 @@ async function main(){
   }
   document.getElementById("status").textContent = `${INSTR.length} instruments loaded.`;
 
+  // --- Scatter setup -------------------------------------------------------
   fillSelect("sc-x",     SCATTER_AXES, "PSF_RMS_det");
   fillSelect("sc-y",     SCATTER_AXES, "Spectral_resolution");
   fillSelect("sc-size",  SCATTER_AXES, "Effective_area");
@@ -608,12 +679,28 @@ async function main(){
     document.getElementById(id).addEventListener("change", drawScatter);
   });
 
-  // Pre-select the first 3 instruments in the sheet order
-  const defaultSel = INSTR.slice(0, 3).map(i => i.name);
-  fillInstrumentMulti(defaultSel);
-  renderChips();
+  // --- Pickers + chips -----------------------------------------------------
+  fillPickerOptions("instr-picker", INSTR.map(i => i.name));
+  fillPickerOptions("det-picker",   DETECTORS.map(d => d.name));
 
-  // Draw AFTER the layout has settled (2 RAFs so flex/grid sizes the panels first)
+  // Pre-select first 3 instruments + EMCCD201 / Skipper / Perfect
+  INSTR.slice(0, 3).forEach(i => SEL_INSTR.push(i.name));
+  ["EMCCD201","Skipper","Perfect"].forEach(n => {
+    if (DETECTORS.some(d => d.name===n)) SEL_DET.push(n);
+  });
+
+  renderChips("instr-chips", SEL_INSTR, drawInstrRadar);
+  renderChips("det-chips",   SEL_DET,   drawDetRadar);
+  wirePicker("instr-picker", SEL_INSTR, "instr-chips", drawInstrRadar);
+  wirePicker("det-picker",   SEL_DET,   "det-chips",   drawDetRadar);
+
+  document.getElementById("instr-clear").addEventListener("click", ()=>{
+    SEL_INSTR.length = 0; renderChips("instr-chips", SEL_INSTR, drawInstrRadar); drawInstrRadar();
+  });
+  document.getElementById("det-clear").addEventListener("click", ()=>{
+    SEL_DET.length = 0; renderChips("det-chips", SEL_DET, drawDetRadar); drawDetRadar();
+  });
+
   window.addEventListener("resize", ()=> requestAnimationFrame(()=>requestAnimationFrame(redrawAll)));
   requestAnimationFrame(()=>requestAnimationFrame(redrawAll));
 }
