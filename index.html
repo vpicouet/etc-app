@@ -1734,13 +1734,13 @@ function computeProfiles(sim){
   return { specS, specK, spatS, spatK };
 }
 
-/* Draw a single-line+stack curve on its own SVG, with x-axis using `xValues`. */
+/* Draw a single-line+stack curve on its own SVG, with x-axis using `xValues`.
+   Uses a fixed reference viewBox (400×200) — CSS scales it to fit the grid cell. */
 function drawCurveSvg(svgId, single, stack, xValues, title, xLabel){
   const svg = d3.select("#"+svgId);
   svg.selectAll("*").remove();
-  const W = svg.node().clientWidth, H = svg.node().clientHeight;
-  if (!W || !H) return;
-  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  const W = 400, H = 200;
+  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:38,r:8,t:16,b:22};
 
   const all = Array.from(single).concat(Array.from(stack)).filter(v=>isFinite(v));
@@ -1768,9 +1768,8 @@ function drawProfiles(sim){
 function drawOptics(sim, pa){
   const svg = d3.select("#svg-optics");
   svg.selectAll("*").remove();
-  const W = svg.node().clientWidth, H = svg.node().clientHeight;
-  if (!W || !H) return;
-  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  const W = 400, H = 200;
+  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:38, r:8, t:14, b:22};
 
   const xs = d3.scaleLinear().domain([sim.wavelengths[0], sim.wavelengths[sim.W-1]]).range([m.l, W-m.r]);
@@ -1826,9 +1825,8 @@ function drawOptics(sim, pa){
 function drawHistogram(sim){
   const svg = d3.select("#svg-hist");
   svg.selectAll("*").remove();
-  const W = svg.node().clientWidth, H = svg.node().clientHeight;
-  if (!W || !H) return;
-  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  const W = 400, H = 200;
+  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:36,r:8,t:16,b:20};
   const nBins = 60;
 
