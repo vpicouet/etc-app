@@ -465,7 +465,6 @@ function attachSubplotZoom(svgId, redrawFn){
     redrawFn();
   });
 }
-STATE._lastDomain = {};
 
 /* ============================================================================
    PRNG + sample distributions for the image simulator
@@ -1254,7 +1253,11 @@ const STATE = {
     ifs_stack:  { bias: 0, contrast: 1 }
   },
   // Per-subplot x-axis zoom (scroll-wheel sets it, dblclick clears it). Keyed by SVG id.
-  subplotZoom: {}
+  subplotZoom: {},
+  // Latest plotting domain cached per SVG id (read by the wheel handler to compute the zoom anchor)
+  _lastDomain: {},
+  // One-shot record of which SVGs already have wheel/dblclick listeners attached
+  _subplotZoomAttached: {}
 };
 
 function defaultValueFor(p){ return p.log ? Math.pow(10, p.default_log) : p.default; }
