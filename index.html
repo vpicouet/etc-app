@@ -2457,15 +2457,27 @@ function buildInstrumentOptions(){
 }
 
 async function loadSpectraData(){
-  try {
-    const r = await fetch("data/spectra.json", {cache:"force-cache"});
-    if (!r.ok) throw new Error("HTTP "+r.status);
-    SPECTRA_DATA = await r.json();
-    console.log(`Loaded spectra.json: ${Object.keys(SPECTRA_DATA.spectra).length} spectra, ${Object.keys(SPECTRA_DATA.atm).length} atm, ${Object.keys(SPECTRA_DATA.sky_lines).length} sky-line catalogues`);
-  } catch (e){
-    console.warn("Could not load spectra.json:", e);
-    SPECTRA_DATA = null;
+  // Try a couple of relative paths in order. file:// will fail on all of them (CORS for null origin).
+  const candidates = ["data/spectra.json", "./data/spectra.json", "/etc-app/data/spectra.json"];
+  for (const url of candidates){
+    try {
+      const r = await fetch(url, {cache:"force-cache"});
+      if (!r.ok) continue;
+      SPECTRA_DATA = await r.json();
+      const nSpec = Object.keys(SPECTRA_DATA.spectra||{}).length;
+      const nAtm  = Object.keys(SPECTRA_DATA.atm||{}).length;
+      const nSky  = Object.keys(SPECTRA_DATA.sky_lines||{}).length;
+      console.log(`Loaded ${url}: ${nSpec} spectra, ${nAtm} atm, ${nSky} sky-line catalogues`);
+      // If the Image-options dropdowns were already built before this fetch finished, rebuild them now.
+      if (document.getElementById("img-spec")) buildImageOptionsUI();
+      return;
+    } catch (e){ /* try next */ }
   }
+  console.warn("Could not load spectra.json from any candidate URL — only 'Baseline emission line' will be available.");
+  SPECTRA_DATA = null;
+  // Make this visible to the user
+  d3.select("#status").classed("err", true)
+    .text("⚠ data/spectra.json not loaded — the Spectrum dropdown will only show 'Baseline emission line'. (file:// will not work — use an http server or the GitHub Pages URL.)");
 }
 
 async function main(){
