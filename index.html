@@ -89,6 +89,8 @@
   /* Spectro image view: fixed proportion between imshow stack (top 55%) and analysis panels (bottom 45%) */
   .img-view{flex-direction:column;gap:4px;padding:2px;min-height:0;height:100%;overflow:hidden}
   .img-row{display:flex;flex-direction:column;gap:6px;height:55%;min-height:0;flex:none}
+  /* Horizontal variant: two imshow cells side-by-side (used by the IFS view) */
+  .img-row-h{display:grid;grid-template-columns:1fr 1fr;gap:6px;height:55%;min-height:0;flex:none}
   .img-cell{border:1px solid var(--line);border-radius:3px;background:#000;
     position:relative;overflow:hidden;display:block;width:100%;flex:1 1 0;min-height:0}
   .img-cell .cell-title{font-size:11px;color:#fff;background:rgba(0,0,0,0.55);
@@ -169,15 +171,15 @@
         </div>
       </div>
       <div id="plot-ifs" class="img-view">
-        <div class="img-row">
+        <div class="img-row-h">
           <div class="img-cell">
             <div class="cell-title" id="ifs-single-title">Single cube — λ slice</div>
-            <canvas id="cv-ifs-single" title="DS9 colormap drag works here too. The cube is built from the 2D image by repeating the slit's spatial axis along the spaxel dimension (n3 = √(FOV)/Slitwidth)."></canvas>
+            <canvas id="cv-ifs-single" title="Single-exposure λ-slice of the IFS cube. Cube[H × n3 × W] is built as a separable product: 2D spatial PSF × source spectrum. DS9 colormap drag works here too."></canvas>
             <svg id="ov-ifs-single" class="overlay" preserveAspectRatio="none"></svg>
           </div>
           <div class="img-cell">
             <div class="cell-title" id="ifs-stack-title">Stacked cube — λ slice</div>
-            <canvas id="cv-ifs-stack" title="Drag the dashed rectangle to choose the extraction region. The integrated spectrum below shows the average flux vs λ on that region."></canvas>
+            <canvas id="cv-ifs-stack" title="Stacked-exposure λ-slice. Drag the dashed rectangle to choose the extraction region. The integrated spectrum below shows the average flux vs λ over that region."></canvas>
             <svg id="ov-ifs-stack" class="overlay" preserveAspectRatio="none"></svg>
           </div>
         </div>
@@ -1932,26 +1934,90 @@ const IFS_STATE = {
   wavelengths: null      // Float64Array(W) Å
 };
 
-/* Build a "fake" IFS cube from the 2D image by repeating the spatial axis along the n3 spaxel axis
-   and shuffling each row independently — matches Observation.py:
-     ifs_cube = np.repeat(im[:,:,None], n3, axis=2)
-     ifs_cube = take_along_axis(ifs_cube, random_permutation_per_row, axis=1) */
-function buildIfsCube(im, H, W, n3, seed){
+/* Build a proper IFS cube from a SEPARABLE source model:
+     source[j, k, i] = signal_total · psf2D[j, k] · spectralProfile[i]
+   where psf2D is a 2D Gaussian on (j ∈ [0,H), k ∈ [0,n3)).
+   Background (sky + dark + extra) is added uniformly inside the slit FOV.
+   Poisson + EMCCD Gamma + Normal RN noise is applied per voxel.
+   `stack=true` divides by Nst (mean-of-N) after Poisson(λ × Nst). */
+function buildIfsCubeFromModel(sim, pa, n3, seed, stack){
+  const H = sim.H, W = sim.W;
   const cube = new Float64Array(H * W * n3);
-  const rng = makeRng(seed >>> 0);
-  // For each (j, k_spaxel) row, generate a permutation of W indices, then read im[j, perm[i]] into cube[j, i, k]
+  const rng  = makeRng(seed >>> 0);
+  const norm = makeNormal(rng);
+  const pois = makePoisson(rng);
+  const gam  = makeGamma(rng, norm);
+
+  // Source signal (total e- per exposure across the integrated source) and per-pixel rates
+  const signalTotal = sim.Signal_el_total;
+  const skyRate    = sim.sky_e_per_pix_per_exp;   // e-/pix/exp continuum (inside slit only)
+  const darkRate   = sim.dark_per_pix_per_exp;
+  const extraRate  = sim.extra_per_pix_per_exp;
+  const EM_gain   = pa.EM_gain;
+  const CIC       = pa.CIC_charge;
+  const RN        = pa.RN;
+  const Nst       = Math.max(1, sim.N_stack);
+
+  // Spectral profile (normalised so Σ = 1)
+  const spec = sim.spectralProfile;
+
+  // 2D spatial PSF: sigma_y in detector pixels (along the slit, axis H), sigma_x in spaxels (axis n3)
+  // For the long axis (H): use the existing spatialProfile sigma derived from PSF_RMS_det × FWHM_factor.
+  // For the spaxel axis (n3): the slicer width is Slitwidth, so 1 spaxel = Slitwidth arcsec.
+  // sigma_spaxel = (PSF_RMS_mask × 2.35) / Slitwidth   spaxels  (FWHM in arcsec divided by spaxel size)
+  const fwhm_factor = 2.35;
+  const sigma_y_px = (pa.PSF_RMS_det * fwhm_factor) / pa.pixel_scale;   // detector pixels (axis H)
+  const sigma_x_spx = Math.max(0.5, (pa.PSF_RMS_mask * fwhm_factor) / Math.max(0.001, pa.Slitwidth));
+  const cy = H/2, cx = n3/2;
+
+  // Precompute 2D spatial PSF, normalised so Σ_jk psf2D = 1
+  const psf2D = new Float64Array(H * n3);
+  let psfSum = 0;
   for (let j=0;j<H;j++){
+    const dy = (j - cy)/sigma_y_px;
+    const gy = Math.exp(-0.5*dy*dy);
     for (let k=0;k<n3;k++){
-      // Fisher–Yates shuffle of [0..W-1]
-      const perm = new Int32Array(W);
-      for (let i=0;i<W;i++) perm[i] = i;
-      for (let i=W-1;i>0;i--){
-        const r = Math.floor(rng()*(i+1));
-        const tmp = perm[i]; perm[i] = perm[r]; perm[r] = tmp;
-      }
-      // Fill cube row
+      const dx = (k - cx)/sigma_x_spx;
+      const v = gy * Math.exp(-0.5*dx*dx);
+      psf2D[j*n3 + k] = v;
+      psfSum += v;
+    }
+  }
+  if (psfSum > 0) for (let kk=0; kk<psf2D.length; kk++) psf2D[kk] /= psfSum;
+
+  // Slit / FOV mask on (j, k):  the slit covers Slitlength/pixel_scale pixels along H and the full n3 along the slicer axis.
+  // Outside the slit (along H), no sky is present (the IFS feeds the slicer with the field; the slit edge cuts the FOV).
+  const slitLen_px = pa.Slitlength / pa.pixel_scale;
+  const jSlitLo = Math.max(0, Math.floor(H/2 - slitLen_px/2));
+  const jSlitHi = Math.min(H, Math.ceil(H/2 + slitLen_px/2));
+
+  // Fill the cube
+  for (let j=0;j<H;j++){
+    const inSlit = (j >= jSlitLo && j < jSlitHi);
+    for (let k=0;k<n3;k++){
+      const sp = psf2D[j*n3 + k];
+      // Background per voxel per exposure (sky gated by slit; dark+extra everywhere)
+      const bg = (inSlit ? skyRate : 0) + darkRate + extraRate;
       for (let i=0;i<W;i++){
-        cube[(j*W + i)*n3 + k] = im[j*W + perm[i]];
+        const sourceRate = signalTotal * sp * spec[i];
+        // λ-dependent voxel rate
+        const lam = (stack ? (sourceRate + bg)*Nst : sourceRate + bg);
+        let s = pois(lam);
+        if (EM_gain > 1){
+          // CIC over (1 or N) frames
+          if (stack){
+            const cic_sum = pois(CIC * Nst);
+            if (s + cic_sum > 0) s = gam(s + cic_sum, EM_gain) / Nst;
+            else s = 0;
+          } else {
+            if (rng() < CIC) s += 1;
+            if (s > 0) s = gam(s, EM_gain);
+          }
+        } else {
+          if (stack) s = s / Nst;
+        }
+        s += norm(0, stack ? RN/Math.sqrt(Nst) : RN);
+        cube[(j*W + i)*n3 + k] = s;
       }
     }
   }
@@ -2018,9 +2084,11 @@ function drawIfsView(){
   // Cap n3 to keep the cube tractable (cap is purely a UI/memory limit, not physical)
   n3 = Math.min(n3, 80);
 
-  // Build cubes
-  const cube  = buildIfsCube(sim.single, sim.H, sim.W, n3, pa.seed^0xA5A5);
-  const cubeK = buildIfsCube(sim.stack,  sim.H, sim.W, n3, pa.seed^0x5A5A);
+  // Build cubes from a separable PSF × spectrum model + per-voxel noise.
+  // Previously we did np.repeat(im, n3) which made every n3-slice = the 2D detector image;
+  // a λ-slice of that cube was a 1D spectrum repeated, not a 2D PSF.
+  const cube  = buildIfsCubeFromModel(sim, pa, n3, pa.seed^0xA5A5, /*stack*/false);
+  const cubeK = buildIfsCubeFromModel(sim, pa, n3, pa.seed^0x5A5A, /*stack*/true);
   IFS_STATE.cube = cube; IFS_STATE.cube_stack = cubeK;
   IFS_STATE.H = sim.H; IFS_STATE.W = sim.W; IFS_STATE.n3 = n3;
   IFS_STATE.wavelengths = sim.wavelengths;
