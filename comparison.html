@@ -47,53 +47,66 @@
   #theme-toggle:hover{background:var(--bg-alt)}
 
   /* Main grid: scatter row | controls strip | radars row */
+  /* Main layout: plots area + right sidebar */
   .app{
     display:grid;
-    grid-template-rows: minmax(0,1fr) auto minmax(0,1fr);
+    grid-template-columns: minmax(0,1fr) 190px;
+    grid-template-rows: minmax(0,1fr) minmax(0,1fr);
     gap:6px;
     padding:6px;
     height: calc(100vh - var(--header-h));
     width:100%;
   }
 
+  /* Scatter occupies top-left */
+  .area-scatter{ grid-column:1; grid-row:1; min-height:0; min-width:0 }
+  /* Radars row occupies bottom-left, split 50/50 */
+  .area-radars{ grid-column:1; grid-row:2; display:grid; grid-template-columns:1fr 1fr; gap:6px; min-height:0 }
+  /* Sidebar occupies the full right column, split 50/50 to align with scatter/radars */
+  .area-sidebar{
+    grid-column:2; grid-row:1/3;
+    display:grid; grid-template-rows:1fr 1fr; gap:6px; min-height:0; overflow:hidden
+  }
+
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
     box-shadow:var(--shadow-elev-1);min-height:0;min-width:0;overflow:hidden;display:flex}
 
-  /* SCATTER ROW */
-  .row-scatter{display:grid;grid-template-columns: minmax(0,1fr) 220px;gap:6px;min-height:0}
-  .row-scatter > .panel{padding:0}
-  .row-scatter .ctl{padding:8px 10px;flex-direction:column;gap:6px;font-size:12px;overflow:auto}
-  .row-scatter .ctl label{display:flex;align-items:center;gap:6px;color:var(--text-soft)}
-  .row-scatter .ctl select{flex:1;font:12px var(--font-ui);padding:2px 4px;
-    border:1px solid var(--line-strong);border-radius:3px;background:var(--panel);color:var(--text);min-width:0}
-  .row-scatter .ctl .check-row{display:flex;gap:10px;align-items:center;font-size:11.5px;color:var(--text-soft)}
-  .row-scatter .ctl .check-row input[type=checkbox]{margin:0}
-  .row-scatter .ctl .ctl-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;font-weight:600}
+  /* Scatter panel fills its area */
+  .area-scatter > .panel{ width:100%; height:100%; padding:0 }
 
-  /* SELECT STRIP — two columns (instruments / detectors), each = picker + chips */
-  .row-select{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:6px 10px;flex-direction:row;align-items:stretch;flex-wrap:nowrap;flex:none}
-  .picker-group{display:flex;flex-direction:column;gap:4px;min-width:0;overflow:hidden}
-  .picker-header{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted)}
+  /* Scatter controls inside the sidebar */
+  .ctl{padding:8px 10px;flex-direction:column;gap:6px;font-size:12px;overflow:auto}
+  .ctl label{display:flex;align-items:center;gap:6px;color:var(--text-soft)}
+  .ctl select{flex:1;font:12px var(--font-ui);padding:2px 4px;
+    border:1px solid var(--line-strong);border-radius:3px;background:var(--panel);color:var(--text);min-width:0}
+  .ctl .check-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--text-soft)}
+  .ctl .check-row input[type=checkbox]{margin:0}
+  .ctl-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;font-weight:600}
+
+  /* Pickers — vertical, inside sidebar */
+  .picker-panel{padding:8px 10px;flex-direction:column;gap:6px;overflow:auto;min-height:0}
+  .picker-group{display:flex;flex-direction:column;gap:4px;min-width:0}
+  .picker-header{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)}
   .picker-header label{font-weight:600;color:var(--text-soft);font-size:11px;text-transform:uppercase;letter-spacing:0.05em;flex:0 0 auto}
   .picker-header select{font:12px var(--font-ui);padding:2px 4px;
     border:1px solid var(--line-strong);border-radius:3px;background:var(--panel);color:var(--text);
     flex:1 1 auto;min-width:0}
-  .picker-header .clear{font-size:11px;color:var(--muted);cursor:pointer;flex:0 0 auto;padding:2px 6px;border-radius:3px;border:1px solid transparent}
+  .picker-header .clear{font-size:11px;color:var(--muted);cursor:pointer;flex:0 0 auto;padding:2px 5px;border-radius:3px;border:1px solid transparent}
   .picker-header .clear:hover{color:var(--accent-2);border-color:var(--line)}
-  .chips{display:flex;gap:5px;flex-wrap:wrap;min-height:18px}
-  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;
-    background:var(--bg-alt);border:1px solid var(--line);border-radius:11px;padding:1px 4px 1px 7px;color:var(--text);max-width:100%}
-  .chip .dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 8px}
+  .picker-sep{border:none;border-top:1px solid var(--line);margin:4px 0}
+  .chips{display:flex;gap:4px;flex-wrap:wrap;min-height:16px}
+  .chip{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;
+    background:var(--bg-alt);border:1px solid var(--line);border-radius:10px;padding:1px 4px 1px 6px;color:var(--text);max-width:100%}
+  .chip .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:0 0 7px}
   .chip .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .chip .x{cursor:pointer;color:var(--muted);font-weight:600;padding:0 3px;flex:0 0 auto}
+  .chip .x{cursor:pointer;color:var(--muted);font-weight:600;padding:0 2px;flex:0 0 auto}
   .chip .x:hover{color:var(--accent-2)}
 
-  /* RADARS ROW */
-  .row-radars{display:grid;grid-template-columns:1fr 1fr;gap:6px;min-height:0}
-  .row-radars > .panel{padding:4px}
+  /* Radars */
+  .area-radars > .panel{padding:4px}
 
-  .row-scatter > .panel > svg,
-  .row-radars  > .panel > svg{
+  .area-scatter > .panel > svg,
+  .area-radars  > .panel > svg{
     display:block;width:100%;height:100%;background:var(--plot-bg);min-width:0;min-height:0
   }
 
@@ -104,6 +117,7 @@
   .radar-axis{stroke:var(--line);stroke-opacity:0.5;fill:none;shape-rendering:crispEdges}
   .radar-axis-line{stroke:var(--line);stroke-opacity:0.5;shape-rendering:crispEdges}
   .radar-label{font-size:10.5px;fill:var(--text-soft);font-family:var(--font-mono)}
+  .radar-tick{font-size:8.5px;fill:var(--muted);font-family:var(--font-mono);pointer-events:none}
   .radar-poly{fill-opacity:0.18;stroke-width:1.8;stroke-linejoin:round}
   .radar-title{font-size:11px;fill:var(--text-soft);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.05em}
 
@@ -119,12 +133,13 @@
 
   @media (max-width: 920px){
     html,body{overflow:auto}
-    .app{grid-template-rows:auto auto auto;height:auto}
-    .row-scatter{grid-template-columns:1fr}
-    .row-scatter > .panel:first-child{height:60vh}
-    .row-radars{grid-template-columns:1fr}
-    .row-radars > .panel{height:50vh}
-    .row-select{grid-template-columns:1fr}
+    .app{grid-template-columns:1fr;grid-template-rows:60vh auto 50vh auto;height:auto}
+    .area-scatter{grid-column:1;grid-row:1}
+    .area-radars{grid-column:1;grid-row:3;grid-template-columns:1fr}
+    .area-radars > .panel{height:50vh}
+    .area-sidebar{grid-column:1;grid-row:2;flex-direction:row;overflow:auto}
+    .area-sidebar > .panel{flex:1 1 auto;min-width:160px}
+    .picker-sep{display:none}
   }
 </style>
 <link id="theme-css" rel="stylesheet" href="themes/twilight.css">
@@ -146,9 +161,19 @@
 </header>
 
 <div class="app">
-  <!-- ROW 1 — Scatter -->
-  <div class="row-scatter" style="min-height:0">
+  <!-- TOP-LEFT — Scatter plot -->
+  <div class="area-scatter">
     <div class="panel"><svg id="scatter" preserveAspectRatio="none"></svg></div>
+  </div>
+
+  <!-- BOTTOM-LEFT — Radar charts -->
+  <div class="area-radars">
+    <div class="panel"><svg id="radar-instr" preserveAspectRatio="none"></svg></div>
+    <div class="panel"><svg id="radar-det"   preserveAspectRatio="none"></svg></div>
+  </div>
+
+  <!-- RIGHT SIDEBAR — Scatter controls + pickers -->
+  <div class="area-sidebar">
     <div class="panel ctl">
       <div class="ctl-title">Scatter axes</div>
       <label>X <select id="sc-x"></select></label>
@@ -161,32 +186,29 @@
         <label><input type="checkbox" id="sc-names" checked> names</label>
       </div>
     </div>
-  </div>
-
-  <!-- ROW 2 — Two pickers side by side -->
-  <div class="panel row-select">
-    <div class="picker-group">
-      <div class="picker-header">
-        <label>Instruments</label>
-        <select id="instr-picker"><option value="">+ add instrument…</option></select>
-        <span id="instr-clear" class="clear" title="Clear selection">clear</span>
+    <div class="panel picker-panel">
+      <div class="picker-group">
+        <div class="picker-header">
+          <label>Instruments</label>
+          <span id="instr-clear" class="clear" title="Clear">clear</span>
+        </div>
+        <div class="picker-header">
+          <select id="instr-picker"><option value="">+ add…</option></select>
+        </div>
+        <div id="instr-chips" class="chips"></div>
       </div>
-      <div id="instr-chips" class="chips"></div>
-    </div>
-    <div class="picker-group">
-      <div class="picker-header">
-        <label>Detectors</label>
-        <select id="det-picker"><option value="">+ add detector…</option></select>
-        <span id="det-clear" class="clear" title="Clear selection">clear</span>
+      <hr class="picker-sep">
+      <div class="picker-group">
+        <div class="picker-header">
+          <label>Detectors</label>
+          <span id="det-clear" class="clear" title="Clear">clear</span>
+        </div>
+        <div class="picker-header">
+          <select id="det-picker"><option value="">+ add…</option></select>
+        </div>
+        <div id="det-chips" class="chips"></div>
       </div>
-      <div id="det-chips" class="chips"></div>
     </div>
-  </div>
-
-  <!-- ROW 3 — Radars -->
-  <div class="row-radars" style="min-height:0">
-    <div class="panel"><svg id="radar-instr" preserveAspectRatio="none"></svg></div>
-    <div class="panel"><svg id="radar-det"   preserveAspectRatio="none"></svg></div>
   </div>
 </div>
 
@@ -414,7 +436,7 @@ function drawScatter(){
   const {W, H} = svgSize(node);
   svg.attr("viewBox", `0 0 ${W} ${H}`);
   svg.selectAll("*").remove();
-  const m = {l:56, r:14, t:14, b:34};
+  const m = {l:56, r:90, t:14, b:34};
 
   const xk = document.getElementById("sc-x").value;
   const yk = document.getElementById("sc-y").value;
@@ -475,9 +497,88 @@ function drawScatter(){
         `${sk.padEnd(16)} ${isFinite(p.s)?fmtTick(p.s):"—"}\n${ck.padEnd(16)} ${isFinite(p.c)?fmtTick(p.c):"—"}`, e);
     }).on("mouseleave", hideTip);
     if (showNames){
-      g.append("text").attr("class","instr-name").attr("x", cx + rad + 2).attr("y", cy + 3).text(p.name);
+      p._cx = cx; p._cy = cy; p._rad = rad;
     }
   });
+
+  // Collision-aware label rendering: place each label, skip if it overlaps a prior one
+  if (showNames){
+    const placed = [];
+    const charW = 6, charH = 10, pad = 2;
+    pts.forEach(p => {
+      if (!isFinite(p._cx)) return;
+      const lx = p._cx + p._rad + 3, ly = p._cy + 3;
+      const tw = p.name.length * charW;
+      const box = {x1: lx - pad, y1: ly - charH, x2: lx + tw + pad, y2: ly + pad};
+      const collision = placed.some(b => box.x1 < b.x2 && box.x2 > b.x1 && box.y1 < b.y2 && box.y2 > b.y1);
+      if (!collision){
+        g.append("text").attr("class","instr-name").attr("x", lx).attr("y", ly).text(p.name);
+        placed.push(box);
+      }
+    });
+  }
+
+  // ---- Right-margin legends ----
+  const lx0 = W - m.r + 10;  // left edge of the legend column
+  const axisTextFill = cssVar("--plot-axis-text","#333");
+  const mutedFill    = cssVar("--muted","#666");
+
+  // COLOR legend (colorbar gradient) — top half of the right margin
+  if (typeof cScale === "function" && isFinite(cExt[0]) && cExt[1] > cExt[0]){
+    const cbH = Math.min(120, (H - m.t - m.b) * 0.48);
+    const cbW = 10;
+    const cbY = m.t + 4;
+    const defs = svg.append("defs");
+    const gradId = "scatter-cb-grad";
+    const grad = defs.append("linearGradient").attr("id", gradId)
+      .attr("x1","0").attr("y1","1").attr("x2","0").attr("y2","0"); // bottom→top = min→max
+    const steps = 10;
+    for (let k=0; k<=steps; k++){
+      grad.append("stop")
+        .attr("offset", `${k*100/steps}%`)
+        .attr("stop-color", cScale(cExt[0] + k/steps*(cExt[1]-cExt[0])));
+    }
+    svg.append("rect")
+      .attr("x", lx0).attr("y", cbY).attr("width", cbW).attr("height", cbH)
+      .attr("fill", `url(#${gradId})`)
+      .attr("stroke", cssVar("--line","#ccc")).attr("stroke-width", 0.5);
+    // ticks: min, mid, max
+    [0, 0.5, 1].forEach(t => {
+      const val = cExt[0] + t*(cExt[1]-cExt[0]);
+      const ty  = cbY + cbH*(1-t);
+      svg.append("line").attr("x1", lx0+cbW).attr("y1", ty).attr("x2", lx0+cbW+3).attr("y2", ty)
+        .attr("stroke", axisTextFill).attr("stroke-width", 0.8);
+      svg.append("text").attr("x", lx0+cbW+5).attr("y", ty).attr("dy","0.35em")
+        .attr("font-size","9px").attr("fill", axisTextFill).attr("font-family","var(--font-mono)")
+        .text(fmtTick(val));
+    });
+    svg.append("text").attr("x", lx0 + cbW/2).attr("y", cbY - 6)
+      .attr("text-anchor","middle").attr("font-size","9px").attr("fill", mutedFill)
+      .attr("font-family","var(--font-mono)").text(ck);
+  }
+
+  // SIZE legend — bottom half of the right margin
+  if (typeof sScale === "function" && isFinite(sExt[0]) && sExt[1] > sExt[0]){
+    const szY0 = m.t + (H - m.t - m.b) * 0.54;
+    const dotCol = cssVar("--accent","#348ABD");
+    svg.append("text").attr("x", lx0).attr("y", szY0 - 6)
+      .attr("font-size","9px").attr("fill", mutedFill).attr("font-family","var(--font-mono)")
+      .text(sk);
+    // 3 representative sizes: min, mid, max
+    const szVals = [sExt[0], (sExt[0]+sExt[1])/2, sExt[1]];
+    let curY = szY0;
+    szVals.forEach(v => {
+      const r = sScale(v);
+      curY += r + 2;
+      svg.append("circle").attr("cx", lx0 + 14).attr("cy", curY).attr("r", r)
+        .attr("fill", dotCol).attr("fill-opacity", 0.5)
+        .attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width", 0.5);
+      svg.append("text").attr("x", lx0 + 14 + r + 4).attr("y", curY).attr("dy","0.35em")
+        .attr("font-size","9px").attr("fill", axisTextFill).attr("font-family","var(--font-mono)")
+        .text(fmtTick(v));
+      curY += r + 4;
+    });
+  }
 }
 
 /* ============================================================================
@@ -540,42 +641,68 @@ function renderChips(chipsId, store, onChange){
 /* ============================================================================
    RADARS
    ========================================================================== */
+// dir: 1 = higher-is-better (outer rim = max),  -1 = lower-is-better (outer rim = 0 / absolute best)
+// unit: displayed on tick labels
+// absMin: if defined, the outer-rim absolute bound for lower-is-better axes (e.g. 0 for noise/PSF)
 const RADAR_INSTR_METRICS = [
-  { key:"E2E_throughput",         label:"E2E throughput",   dir:1 },
-  { key:"Effective_area",         label:"Effective area",   dir:1 },
-  { key:"Spectral_resolution",    label:"Spectral res.",    dir:1 },
-  { key:"Spatial_resolution_inv", label:"Spatial res.",     dir:1 },
-  { key:"Det_noise_per_time",     label:"Det noise / time", dir:-1 },
-  { key:"Det_noise_per_frame",    label:"Det noise / exp",  dir:-1 }
+  { key:"E2E_throughput",      label:"E2E throughput",   dir:1,  unit:"",       absMin:null },
+  { key:"Effective_area",      label:"Eff. area (cm²)",  dir:1,  unit:"cm²",    absMin:null },
+  { key:"Spectral_resolution", label:"Spectral res. R",  dir:1,  unit:"",       absMin:null },
+  { key:"PSF_RMS_det",         label:"PSF σ (\")",       dir:-1, unit:"\"",     absMin:0    },
+  { key:"Det_noise_per_time",  label:"Det noise/√h",     dir:-1, unit:"e-/√h",  absMin:0    },
+  { key:"Det_noise_per_frame", label:"Det noise/exp",    dir:-1, unit:"e-/exp", absMin:0    }
 ];
 const RADAR_DET_METRICS = [
-  { key:"Efficiency",    label:"Efficiency (CR+RO)", dir:1 },
-  { key:"background",    label:"Background",         dir:-1 },
-  { key:"Noise_per_exp", label:"Noise / exp",        dir:-1 },
-  { key:"pix_size",      label:"Pix size",           dir:-1 },
-  { key:"QE",            label:"QE",                 dir:1 }
+  { key:"Efficiency",    label:"Efficiency",   dir:1,  unit:"",    absMin:null },
+  { key:"background",    label:"Background",   dir:-1, unit:"e-",  absMin:0    },
+  { key:"Noise_per_exp", label:"Noise/exp",    dir:-1, unit:"e-",  absMin:0    },
+  { key:"pix_size",      label:"Pix size (μm)",dir:-1, unit:"μm",  absMin:0    },
+  { key:"QE",            label:"QE",           dir:1,  unit:"",    absMin:null }
 ];
 
+// Returns per-axis: rawValues[], scores[] (0=worst→1=best), inner (worst), outer (best)
 function buildRadarValues(metrics, getValue, selection){
   return metrics.map(m => {
-    const arr = selection.map(name => {
+    const raw = selection.map(name => {
       const v = getValue(name, m.key);
       return (typeof v === "number" && isFinite(v)) ? v : null;
     });
-    const valid = arr.filter(v => v!=null);
-    let scores;
-    if (valid.length < 1){
-      scores = arr.map(_ => null);
-    } else if (m.dir === 1){
-      const mx = Math.max(...valid);
-      scores = arr.map(v => v==null ? null : (mx>0 ? v/mx : 0));
+    const valid = raw.filter(v => v != null);
+    if (!valid.length) return { ...m, raw, scores: raw.map(()=>null), inner:0, outer:1 };
+
+    const dataMin = Math.min(...valid);
+    const dataMax = Math.max(...valid);
+
+    let inner, outer;
+    if (m.dir === 1){
+      // higher=better: inner=worst (min among selection), outer=best (max among selection)
+      inner = dataMin;
+      outer = dataMax;
     } else {
-      const eps = 0.1;
-      const mn = Math.min(...valid);
-      scores = arr.map(v => v==null ? null : (mn+eps)/(v+eps));
+      // lower=better: outer=best (min among selection), inner=worst (max among selection)
+      outer = dataMin;
+      inner = dataMax;
     }
-    return { ...m, scores };
+
+    // If all identical, spread a bit so the ring is visible
+    const span = Math.abs(outer - inner);
+    const safeSpan = span > 0 ? span : Math.abs(inner) * 0.1 || 1;
+
+    const scores = raw.map(v => {
+      if (v == null) return null;
+      return Math.max(0, Math.min(1, (v - inner) / (outer - inner + (span===0 ? safeSpan : 0))));
+    });
+
+    return { ...m, raw, scores, inner, outer };
   });
+}
+
+function fmtRadarVal(v, unit){
+  if (v == null || !isFinite(v)) return "—";
+  const s = (Math.abs(v) >= 1e4 || (Math.abs(v) < 0.01 && v !== 0))
+    ? d3.format(".2~e")(v)
+    : d3.format(".3~g")(v);
+  return unit ? `${s} ${unit}` : s;
 }
 
 function drawRadar(svgId, title, metrics, getValue, selection, displayNames){
@@ -584,9 +711,10 @@ function drawRadar(svgId, title, metrics, getValue, selection, displayNames){
   const {W, H} = svgSize(node);
   svg.attr("viewBox", `0 0 ${W} ${H}`);
   svg.selectAll("*").remove();
-  const cx = W/2, cy = H/2 + 8;
-  const R = Math.max(40, Math.min(W, H)/2 - 56);
+  const cx = W/2, cy = H/2 + 10;
+  const R = Math.max(40, Math.min(W, H)/2 - 52);
   const cmap = d3.schemeTableau10;
+  const levels = 4;
 
   svg.append("text").attr("x", 10).attr("y", 16).attr("class","radar-title").text(title);
 
@@ -598,37 +726,70 @@ function drawRadar(svgId, title, metrics, getValue, selection, displayNames){
 
   const data = buildRadarValues(metrics, getValue, selection);
   const N = data.length;
-  const levels = 4;
-  for (let l=1;l<=levels;l++){
+
+  // Grid polygons
+  for (let l=1; l<=levels; l++){
     const r = R * (l/levels);
     const pts = [];
-    for (let i=0;i<N;i++){
+    for (let i=0; i<N; i++){
       const a = (i/N)*2*Math.PI - Math.PI/2;
       pts.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
     }
     svg.append("polygon").attr("class","radar-axis").attr("points", pts.map(p=>p.join(",")).join(" "));
   }
-  for (let i=0;i<N;i++){
+
+  // Axis lines + labels + tick annotations
+  for (let i=0; i<N; i++){
     const a = (i/N)*2*Math.PI - Math.PI/2;
     const xe = cx + R*Math.cos(a), ye = cy + R*Math.sin(a);
     svg.append("line").attr("class","radar-axis-line").attr("x1",cx).attr("y1",cy).attr("x2",xe).attr("y2",ye);
-    const lx = cx + (R+16)*Math.cos(a), ly = cy + (R+16)*Math.sin(a);
-    const ta = (Math.cos(a) >  0.3) ? "start" : (Math.cos(a) < -0.3 ? "end" : "middle");
-    svg.append("text").attr("class","radar-label").attr("x", lx).attr("y", ly+4).attr("text-anchor", ta).text(data[i].label);
+
+    // axis label (just outside the ring)
+    const lx = cx + (R+20)*Math.cos(a), ly = cy + (R+20)*Math.sin(a);
+    const ta = (Math.cos(a) > 0.3) ? "start" : (Math.cos(a) < -0.3 ? "end" : "middle");
+    svg.append("text").attr("class","radar-label").attr("x", lx).attr("y", ly+4)
+       .attr("text-anchor", ta).text(data[i].label);
+
+    // tick values: placed perpendicular to the axis direction to avoid overlapping the label
+    const { inner, outer, unit } = data[i];
+    // perpendicular unit vector (rotate 90°)
+    const px = -Math.sin(a), py = Math.cos(a);
+    const tickOffset = 5; // px sideways from the axis line
+    for (let l=1; l<=levels; l++){
+      // only mid and outer ring
+      if (l !== levels && l !== Math.round(levels/2)) continue;
+      const frac = l/levels;
+      const val = inner + frac * (outer - inner);
+      const tr = R * frac;
+      // base point on the axis, shifted perpendicularly
+      const tx = cx + tr*Math.cos(a) + px*tickOffset;
+      const ty = cy + tr*Math.sin(a) + py*tickOffset;
+      // text-anchor: follow the perpendicular direction
+      const pta = (px > 0.2) ? "start" : (px < -0.2 ? "end" : "middle");
+      svg.append("text")
+        .attr("class","radar-tick")
+        .attr("x", tx).attr("y", ty)
+        .attr("text-anchor", pta)
+        .attr("dy", "0.35em")
+        .text(fmtRadarVal(val, unit));
+    }
   }
+
+  // Polygons per selected instrument
   selection.forEach((name, idx)=>{
     const col = cmap[idx % cmap.length];
     const pts = [];
     const valuesForTip = [];
-    for (let i=0;i<N;i++){
+    for (let i=0; i<N; i++){
       const s = data[i].scores[idx];
-      valuesForTip.push(`${data[i].label.padEnd(18)} ${s==null?"—":d3.format(".2~f")(s)}`);
-      if (s==null) continue;
-      const r = R * Math.max(0, Math.min(1, s));
+      const rv = data[i].raw[idx];
+      valuesForTip.push(`${data[i].label.padEnd(18)} ${fmtRadarVal(rv, data[i].unit)}`);
+      if (s == null) continue;
+      const r = R * Math.max(0.04, Math.min(1, s));  // never collapse to centre
       const a = (i/N)*2*Math.PI - Math.PI/2;
       pts.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
     }
-    if (pts.length<2) return;
+    if (pts.length < 2) return;
     const poly = svg.append("polygon").attr("class","radar-poly")
        .attr("points", pts.map(p=>p.join(",")).join(" "))
        .attr("fill", col).attr("stroke", col).style("cursor","pointer");
