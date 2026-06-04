@@ -205,7 +205,9 @@
       <button id="reset" title="Reset all parameters to their default values (does not change the instrument).">↺</button>
     </div>
 
-    <details class="acc" id="dep-acc" open>
+    <div id="accordions"></div>
+
+    <details class="acc" id="dep-acc">
       <summary>Parameter dependencies (lock formulas)</summary>
       <div class="acc-body" id="dep-list"></div>
     </details>
@@ -214,8 +216,6 @@
       <summary>Image options (Spectro image view)</summary>
       <div id="img-opts"></div>
     </details>
-
-    <div id="accordions"></div>
 
     <!-- Hidden GSheet inputs (still read by loadInstruments). The full "Data source" UI was removed per request. -->
     <input id="sheet_id" type="hidden" value="1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU"/>
@@ -923,13 +923,6 @@ const DEPENDENCIES = [
     tip:"Lock pixel scale to half a spatial FWHM (Nyquist on the PSF).",
     deps:["PSF_RMS_det"],
     compute:(v)=> 2.35*v.PSF_RMS_det/2
-  },
-  {
-    key:"CIC_charge",
-    label:"CIC_charge = EM_gain / 2",
-    tip:"Lock CIC charge to half the EM gain (matches the dependency option from Observation.py — note this gives large CIC; use only if you want to mirror that exact behaviour).",
-    deps:["EM_gain"],
-    compute:(v)=> v.EM_gain/2
   }
 ];
 const ACTIVE_DEPS = new Set(); // currently selected dep keys
