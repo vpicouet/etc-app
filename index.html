@@ -91,7 +91,7 @@
     position:relative;overflow:hidden;display:block;width:100%}
   .img-cell .cell-title{font-size:11px;color:#fff;background:rgba(0,0,0,0.55);
     padding:2px 6px;position:absolute;top:0;left:0;right:0;z-index:3}
-  .img-cell canvas{width:100%;height:auto;display:block;image-rendering:pixelated;position:relative;z-index:1}
+  .img-cell canvas{width:100%;height:auto;display:block;image-rendering:pixelated;position:relative;z-index:1;cursor:crosshair}
   .img-cell svg.overlay{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
   .img-extra{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
   .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff}
@@ -145,12 +145,12 @@
         <div class="img-row">
           <div class="img-cell">
             <div class="cell-title" id="img-single-title">Single exposure</div>
-            <canvas id="cv-single"></canvas>
+            <canvas id="cv-single" title="DS9 colormap: right-click + drag (or ctrl-click + drag on Mac trackpad). Horizontal = bias, vertical = contrast. Double-click to reset."></canvas>
             <svg id="ov-single" class="overlay" preserveAspectRatio="none"></svg>
           </div>
           <div class="img-cell">
             <div class="cell-title" id="img-stack-title">Stacked</div>
-            <canvas id="cv-stack"></canvas>
+            <canvas id="cv-stack" title="DS9 colormap: right-click + drag (or ctrl-click + drag on Mac trackpad). Horizontal = bias, vertical = contrast. Double-click to reset."></canvas>
             <svg id="ov-stack" class="overlay" preserveAspectRatio="none"></svg>
           </div>
         </div>
@@ -907,7 +907,15 @@ const DEPENDENCIES = [
 ];
 const ACTIVE_DEPS = new Set(); // currently selected dep keys
 
-const STATE = { instruments:null, current_instrument:null, values:{}, xKey:"exposure_time", view:"snr", imgSeed:1 };
+const STATE = {
+  instruments:null, current_instrument:null, values:{}, xKey:"exposure_time", view:"snr",
+  imgSeed:1,
+  // DS9-style colormap controls per canvas (single + stack independent)
+  imgCM: {
+    single: { bias: 0, contrast: 1 },
+    stack:  { bias: 0, contrast: 1 }
+  }
+};
 
 function defaultValueFor(p){ return p.log ? Math.pow(10, p.default_log) : p.default; }
 function initValuesToDefault(){ for (const [k,p] of Object.entries(PARAMS)) STATE.values[k]=defaultValueFor(p); }
@@ -1526,13 +1534,19 @@ function drawImageView(){
   const vminS = percentile(sim.single, 0.01), vmaxS = percentile(sim.single, 0.99);
   const vminK = percentile(sim.stack,  0.01), vmaxK = percentile(sim.stack,  0.99);
   const ylog = document.getElementById("ylog").checked;
-  rasterizeImage(cvS, sim.single, sim.W, sim.H, vminS, vmaxS, ylog);
-  rasterizeImage(cvK, sim.stack,  sim.W, sim.H, vminK, vmaxK, ylog);
+  // Cache + apply bias/contrast (DS9-style)
+  STATE.imgCache = {
+    single: sim.single, stack: sim.stack, W: sim.W, H: sim.H, sim,
+    vmin0: { single: vminS, stack: vminK },
+    vmax0: { single: vmaxS, stack: vmaxK },
+    ylog
+  };
+  applyColorScale("single");
+  applyColorScale("stack");
   drawSlitOverlay("ov-single", pa, sim);
   drawSlitOverlay("ov-stack",  pa, sim);
-  // Cache the data for pixel-hover lookup
-  STATE.imgCache = { single: sim.single, stack: sim.stack, W: sim.W, H: sim.H, sim };
   attachImageHover();
+  attachImageColorscaleDrag();
 
   document.getElementById("img-single-title").textContent =
     `Single exposure (${sim.W}×${sim.H} pix = ${(sim.W*sim.xPhys_per_pix).toFixed(0)}Å × ${(sim.H*sim.yPhys_per_pix).toFixed(1)}″) — slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″`;
@@ -1546,6 +1560,82 @@ function drawImageView(){
   // ===== Histogram SVG =====
   drawHistogram(sim);
 }
+
+/* Apply current bias/contrast to one canvas and re-rasterise.
+   bias  ∈ (-1, +1) shifts the center of the displayed range (negative → favours dark, positive → favours bright).
+   contrast > 0     scales the spread (1 = identity, >1 = high contrast/narrow range, <1 = low contrast/wide range).
+   The formulas follow DS9's standard mapping: center += bias × half_range; spread /= contrast. */
+function applyColorScale(which){
+  const c = STATE.imgCache; if (!c) return;
+  const cv = document.getElementById(which==="single" ? "cv-single" : "cv-stack");
+  const data = c[which];
+  const cm = STATE.imgCM[which];
+  const v0 = c.vmin0[which], v1 = c.vmax0[which];
+  const half = (v1 - v0) / 2;
+  const center0 = (v0 + v1) / 2;
+  const center = center0 + cm.bias * half;
+  const spread = half / Math.max(cm.contrast, 0.01);
+  const vmin = center - spread;
+  const vmax = center + spread;
+  rasterizeImage(cv, data, c.W, c.H, vmin, vmax, c.ylog);
+}
+
+function attachImageColorscaleDrag(){
+  if (STATE._dragAttached) return;
+  STATE._dragAttached = true;
+  ["single","stack"].forEach(which=>{
+    const cv = document.getElementById(which==="single" ? "cv-single" : "cv-stack");
+    // Disable the browser context menu so right-click drag works
+    cv.addEventListener("contextmenu", e => e.preventDefault());
+    let dragging = false, sx0=0, sy0=0, bias0=0, contrast0=1;
+    function startDrag(e){
+      // Right-click OR ctrl+left-click (Mac trackpad)
+      const isRight = (e.button === 2) || (e.ctrlKey && e.button === 0);
+      if (!isRight) return;
+      e.preventDefault();
+      dragging = true;
+      sx0 = e.clientX; sy0 = e.clientY;
+      bias0 = STATE.imgCM[which].bias; contrast0 = STATE.imgCM[which].contrast;
+      cv.style.cursor = "grabbing";
+    }
+    function moveDrag(e){
+      if (!dragging) return;
+      const rect = cv.getBoundingClientRect();
+      const dx = (e.clientX - sx0) / rect.width;     // -1 .. +1 across the image width
+      const dy = (e.clientY - sy0) / rect.height;    // -1 .. +1 across the image height
+      // bias from horizontal drag: range ~[-1, +1] (sensitivity 1)
+      const bias = clamp(bias0 + dx, -1, 1);
+      // contrast from vertical drag: dragging DOWN = MORE contrast (DS9 convention).
+      // Use an exponential mapping so it's symmetric on both sides.
+      const contrast = clamp(contrast0 * Math.pow(8, dy), 0.1, 10);
+      STATE.imgCM[which].bias = bias;
+      STATE.imgCM[which].contrast = contrast;
+      if (!STATE._dragPending){
+        STATE._dragPending = true;
+        requestAnimationFrame(()=>{
+          STATE._dragPending = false;
+          applyColorScale(which);
+        });
+      }
+    }
+    function endDrag(){
+      if (!dragging) return;
+      dragging = false;
+      cv.style.cursor = "";
+    }
+    cv.addEventListener("mousedown", startDrag);
+    window.addEventListener("mousemove", moveDrag);
+    window.addEventListener("mouseup", endDrag);
+    // Double-click → reset to auto stretch
+    cv.addEventListener("dblclick", e => {
+      e.preventDefault();
+      STATE.imgCM[which] = { bias: 0, contrast: 1 };
+      applyColorScale(which);
+    });
+  });
+}
+
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
 function attachImageHover(){
   if (STATE._hoverAttached) return;
