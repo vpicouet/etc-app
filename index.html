@@ -264,7 +264,8 @@
 <header>
   <h1>Generic ETC</h1>
   <nav>
-    <a href="./" class="active">App</a>
+    <a href="./" class="active">Instrument simulator</a>
+    <a href="./comparison.html">Comparison</a>
     <a href="./info.html">Info</a>
     <a href="https://github.com/vpicouet/etc-app" target="_blank">GitHub</a>
     <a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit" target="_blank">Instrument DB</a>
@@ -1462,13 +1463,12 @@ function drawPlot(res){
   // ===== Panel 2 =====
   const p2 = panels[2];
   const max2 = d3.max(snrStack[snrStack.length-1].y1);
+  const snrTitle = `SNR = ${res.SNR[iCur].toFixed(2)}   (max ${d3.max(res.SNR).toFixed(2)})`;
   drawStackPanel(svg, p2, x, xScale, snrStack, max2, ylog, "SNR contributions", iCur,
     NAMES.map((n,j)=>({name:n, color:COLORS[j]})), (j)=>{
       const Tn = res.Total_noise_final[iCur];
       return Tn>0 ? res.SNR[iCur]*res.noises[iCur][j]**2/(Tn*Tn) : 0;
-    });
-  svg.append("text").attr("x", p2.x+p2.w-6).attr("y", p2.y+12).attr("text-anchor","end").attr("class","ax-title")
-    .text(`SNR = ${res.SNR[iCur].toFixed(2)}  (max ${d3.max(res.SNR).toFixed(2)})`);
+    }, snrTitle);
 
   // ===== Panel 3 =====
   const p3 = panels[3];
@@ -1673,7 +1673,7 @@ function makeAxis(axisFn, scale, nMax, withLabels){
   }
 }
 
-function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, legend, getCur){
+function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, legend, getCur, legendTitle){
   let yScale;
   if (ylog){
     let minPos = Infinity;
@@ -1712,22 +1712,21 @@ function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, 
     const v = getCur(j)||0;
     const pct = totalCur>0 ? (100*v/totalCur).toFixed(1) : "0";
     return {name:`${L.name}: ${fmtNum(v)} (${pct}%)`, color:L.color};
-  }));
+  }), legendTitle);
 }
 
-function legendBlock(g, panel, items){
-  // Render legend inside the panel, anchored to top-right, with a translucent white background.
-  const lineH = 12, padX = 6, padY = 4;
-  // Estimate width via longest item name × ~6 px (monospaced-ish approximation)
-  let maxLen = 0;
+function legendBlock(g, panel, items, title){
+  // Render legend inside the panel, anchored to top-right, with a translucent theme-aware background.
+  const lineH = 12, padX = 6, padY = 4, titleH = title ? 13 : 0;
+  // Estimate width via longest line (title or item)
+  let maxLen = title ? title.length : 0;
   for (const it of items) if (it.name.length > maxLen) maxLen = it.name.length;
   const swatchW = 9, swatchGap = 5;
-  const labelW = Math.min(panel.w * 0.6, Math.max(70, maxLen * 5.8));
+  const labelW = Math.min(panel.w * 0.65, Math.max(70, maxLen * 5.8));
   const boxW = padX*2 + swatchW + swatchGap + labelW;
-  const boxH = padY*2 + items.length * lineH;
+  const boxH = padY*2 + titleH + items.length * lineH;
   const x0 = panel.x + panel.w - boxW - 6;
   const y0 = panel.y + 6;
-  // Read theme-aware colors so the legend matches dark mode.
   const cs = getComputedStyle(document.body);
   const bgC = cs.getPropertyValue("--plot-bg").trim() || "#fff";
   const lnC = cs.getPropertyValue("--line").trim() || "#bbb";
@@ -1735,6 +1734,11 @@ function legendBlock(g, panel, items){
     .attr("fill", bgC).attr("fill-opacity", 0.78)
     .attr("stroke", lnC).attr("stroke-opacity", 0.5).attr("rx", 3);
   let y = y0 + padY + 9;
+  if (title){
+    g.append("text").attr("x", x0 + padX).attr("y", y + 1).attr("class","legend")
+      .style("font-weight","700").text(title);
+    y += titleH;
+  }
   for (const it of items){
     g.append("rect").attr("x", x0 + padX).attr("y", y - 8).attr("width", swatchW).attr("height", swatchW)
       .attr("fill", it.color).attr("fill-opacity", it.alpha!=null?it.alpha:0.85);
@@ -2928,6 +2932,8 @@ function applyMode(mode){
   try { localStorage.setItem("etc.mode", mode); } catch(e){}
   const btn = document.getElementById("theme-toggle");
   if (btn) btn.textContent = (mode === "dark") ? "☀" : "🌙";
+  // The legend rect colors are baked from CSS variables at draw time; force a redraw so they pick up the new palette.
+  if (typeof scheduleUpdate === "function") requestAnimationFrame(()=> scheduleUpdate());
 }
 function initTheme(){
   // Theme is currently locked to "twilight" (dropdown hidden). Dark/light is user-toggleable.
