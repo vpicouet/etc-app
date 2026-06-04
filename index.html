@@ -1010,16 +1010,16 @@ function getPlotDim(){
   return { w: el.clientWidth - 12, h: Math.max(360, el.clientHeight - (sb? sb.offsetHeight : 0) - 12) };
 }
 function makePanels(W,H,n){
-  // Extra bottom margin so the panel x-axis labels and the global x-label don't overlap
-  const margin = {l:64, r:140, t:10, b:46};
+  // Tight layout: only the global x-label sits at the very bottom.
+  // Inner panels share the x-axis (no per-panel x-ticks), only the last panel has them.
+  const margin = {l:64, r:140, t:10, b:28};
   const innerW = W - margin.l - margin.r;
   const innerH = H - margin.t - margin.b;
-  // Each panel keeps a bottom gap for its own tick labels
-  const perPanelBottomGap = 22;
   const ph = innerH / n;
   return Array.from({length:n}, (_,i)=>({
     x: margin.l, y: margin.t + i*ph,
-    w: innerW, h: Math.max(40, ph - perPanelBottomGap)
+    w: innerW, h: ph - 2,
+    isLast: (i === n-1)
   }));
 }
 
@@ -1225,14 +1225,15 @@ function drawPanel(svg, panel, x, xScale, allY, ylog, title, drawLines){
   }
   const xAxisScale = xScale.copy().range([panel.x, panel.x+panel.w]);
   const yAxisScale = yScale.copy().range([panel.y+panel.h, panel.y]);
-  // Adaptive tick count based on panel width
-  const nx = panel.w < 360 ? 4 : (panel.w < 560 ? 5 : 6);
-  const ny = panel.h < 80 ? 3 : 4;
+  // Fewer ticks: x-axis only labelled on the last panel; intermediate panels show tick marks but no text
+  const nx = panel.w < 380 ? 3 : 4;
+  const ny = panel.h < 90 ? 3 : 4;
   const fmt = d3.format(".2~g");
-  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${panel.y+panel.h})`)
-    .call(d3.axisBottom(xAxisScale).ticks(nx).tickFormat(fmt));
+  const xAxis = d3.axisBottom(xAxisScale).ticks(nx).tickFormat(panel.isLast ? fmt : "").tickSizeOuter(0);
+  if (!panel.isLast) xAxis.tickSize(3);
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${panel.y+panel.h})`).call(xAxis);
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${panel.x},0)`)
-    .call(d3.axisLeft(yAxisScale).ticks(ny).tickFormat(fmt));
+    .call(d3.axisLeft(yAxisScale).ticks(ny).tickFormat(fmt).tickSizeOuter(0));
   svg.append("text").attr("class","ax-title")
     .attr("transform",`translate(${panel.x-50},${panel.y+panel.h/2}) rotate(-90)`)
     .attr("text-anchor","middle").text(title);
@@ -1251,13 +1252,14 @@ function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, 
   }
   const xAxisScale = xScale.copy().range([panel.x, panel.x+panel.w]);
   const yAxisScale = yScale.copy().range([panel.y+panel.h, panel.y]);
-  const nx = panel.w < 360 ? 4 : (panel.w < 560 ? 5 : 6);
-  const ny = panel.h < 80 ? 3 : 4;
+  const nx = panel.w < 380 ? 3 : 4;
+  const ny = panel.h < 90 ? 3 : 4;
   const fmt = d3.format(".2~g");
-  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${panel.y+panel.h})`)
-    .call(d3.axisBottom(xAxisScale).ticks(nx).tickFormat(fmt));
+  const xAxis = d3.axisBottom(xAxisScale).ticks(nx).tickFormat(panel.isLast ? fmt : "").tickSizeOuter(0);
+  if (!panel.isLast) xAxis.tickSize(3);
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${panel.y+panel.h})`).call(xAxis);
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${panel.x},0)`)
-    .call(d3.axisLeft(yAxisScale).ticks(ny).tickFormat(fmt));
+    .call(d3.axisLeft(yAxisScale).ticks(ny).tickFormat(fmt).tickSizeOuter(0));
   svg.append("text").attr("class","ax-title")
     .attr("transform",`translate(${panel.x-50},${panel.y+panel.h/2}) rotate(-90)`)
     .attr("text-anchor","middle").text(title);
