@@ -68,10 +68,12 @@
   /* Plot */
   #status{font-size:11px;color:var(--muted);padding:2px 4px;flex:0 0 auto}
   #status.err{color:#c00}
-  .plot-area{flex:1 1 auto;min-height:0;width:100%;position:relative;display:flex;flex-direction:column}
-  .plot-area > svg, .plot-area > .img-view{display:none;flex:1 1 auto;min-height:0;width:100%}
-  .plot-area > svg.active, .plot-area > .img-view.active{display:flex}
-  #plot{flex:1 1 auto;min-height:0;width:100%}
+  .plot-area{flex:1 1 auto;min-height:0;width:100%;position:relative;display:flex;flex-direction:column;overflow:hidden}
+  .plot-area > svg, .plot-area > .img-view{display:none;flex:1 1 0;min-height:0;width:100%;height:100%}
+  .plot-area > svg.active{display:block}
+  .plot-area > .img-view.active{display:flex}
+  #plot{display:none;width:100%;height:100%}
+  #plot.active{display:block}
   .plot-axis text{font-size:10px;fill:#333}
   .plot-axis path,.plot-axis line{stroke:#888;shape-rendering:crispEdges}
   .legend{font-size:10.5px;fill:#222}
@@ -1133,7 +1135,9 @@ function applyDependenciesVector(map, N){
 function getPlotDim(){
   const el = document.getElementById("plot-wrap");
   const sb = document.getElementById("status");
-  return { w: el.clientWidth - 12, h: Math.max(360, el.clientHeight - (sb? sb.offsetHeight : 0) - 12) };
+  const tabs = document.querySelector(".view-tabs");
+  const availH = el.clientHeight - (sb ? sb.offsetHeight : 0) - (tabs ? tabs.offsetHeight : 0) - 18;
+  return { w: Math.max(200, el.clientWidth - 14), h: Math.max(120, availH) };
 }
 function makePanels(W,H,n){
   // Tight layout: only the global x-label sits at the very bottom.
@@ -1153,7 +1157,8 @@ function drawPlot(res){
   const svg = d3.select("#plot");
   svg.selectAll("*").remove();
   const dim = getPlotDim();
-  svg.attr("width", dim.w).attr("height", dim.h).attr("viewBox", `0 0 ${dim.w} ${dim.h}`);
+  // Don't set width/height as attributes — let CSS control them. Just set viewBox + preserveAspectRatio.
+  svg.attr("viewBox", `0 0 ${dim.w} ${dim.h}`).attr("preserveAspectRatio", "none");
   const xKey = STATE.xKey, x = res.x;
   const xlog = document.getElementById("xlog").checked;
   const ylog = document.getElementById("ylog").checked;
@@ -1337,7 +1342,10 @@ function lineGen(x, panel, xScale, allY, ylog){
   } else {
     yScale = d3.scaleLinear().domain([Math.min(yDom[0],0), yDom[1]||1]).range([panel.h, 0]);
   }
-  return d3.line().defined((_,i)=>isFinite(x[i])).x((_,i)=>panel.x + xScale(x[i])*panel.w).y(v=>panel.y + yScale(v));
+  return d3.line()
+    .defined((v,i)=> isFinite(x[i]) && isFinite(v) && !(xScale.base && x[i]<=0) && !(ylog && v<=0))
+    .x((_,i)=>panel.x + xScale(x[i])*panel.w)
+    .y(v=>panel.y + yScale(v));
 }
 
 function drawPanel(svg, panel, x, xScale, allY, ylog, title, drawLines){
