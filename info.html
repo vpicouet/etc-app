@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Generic ETC — Info</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{
+    --bg:#f7f7f7; --panel:#ffffff; --line:#e2e2e2; --text:#1a1a1a; --muted:#666;
+    --accent:#348ABD;
+    --header-h: 38px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{height:var(--header-h);display:flex;align-items:center;gap:10px;padding:0 12px;
+    border-bottom:1px solid var(--line);background:#fff;position:sticky;top:0;z-index:5}
+  header h1{margin:0;font-size:14px;font-weight:600;flex:0 0 auto}
+  header nav{flex:1;display:flex;gap:6px;align-items:center}
+  header nav a{font-size:12px;color:var(--muted);text-decoration:none;padding:3px 8px;
+    border:1px solid transparent;border-radius:3px}
+  header nav a.active,header nav a:hover{background:#f0f0f0;color:var(--text);border-color:var(--line)}
+  main{max-width:880px;margin:0 auto;padding:18px 18px 60px}
+  h2{font-size:18px;margin:1.6em 0 0.4em;border-bottom:1px solid var(--line);padding-bottom:4px}
+  h3{font-size:15px;margin:1.2em 0 0.3em}
+  p{margin:0.5em 0}
+  ul{margin:0.4em 0 0.8em 1.2em;padding:0}
+  li{margin:0.15em 0}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  pre{background:#f0f0f0;border:1px solid var(--line);border-radius:4px;padding:8px 10px;overflow:auto}
+  code{background:#eee;padding:1px 4px;border-radius:3px}
+  pre code{background:none;padding:0}
+  a{color:var(--accent)}
+  .callout{background:#fff8e1;border-left:3px solid #f0b400;padding:10px 14px;margin:1em 0;border-radius:4px}
+  .callout strong{color:#7a5a00}
+  .footer{color:var(--muted);font-size:12px;margin-top:40px;border-top:1px solid var(--line);padding-top:12px}
+  table{border-collapse:collapse;margin:8px 0}
+  th,td{border:1px solid var(--line);padding:4px 8px;text-align:left;font-size:13px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Generic ETC</h1>
+  <nav>
+    <a href="./">App</a>
+    <a href="./info.html" class="active">Info</a>
+    <a href="https://github.com/vpicouet/etc-app" target="_blank">GitHub</a>
+    <a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit" target="_blank">Instrument DB</a>
+  </nav>
+</header>
+
+<main>
+
+<div class="callout">
+  <strong>About this page.</strong> <code>etc-app</code> is a JavaScript / D3 migration of the
+  <a href="https://github.com/vpicouet/generic-etc">vpicouet/generic-etc</a> Jupyter ETC.
+  It runs entirely in the browser — no server, no Python — so it can be hosted on GitHub Pages.
+  Compared to the original notebook, this version <strong>does not include the image / IFU
+  cube simulator nor the spectra/cube data pipeline</strong>: only the SNR calculator
+  (noise budget, contributions, SNR, surface-brightness limits) is ported. For the image &amp;
+  cube simulators, please use the original notebook.
+</div>
+
+<h2>ETC — SNR calculator</h2>
+
+<h3>Description</h3>
+<p>This straightforward ETC provides an estimated signal-to-noise ratio for any spectro-imager
+instrument. Its key attributes lie in its versatility, user-friendly interface, and diverse
+plotting options. The ETC is designed to accommodate any spectro-imager, and scientists can
+contribute new instruments or configurations
+<a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit?pli=1#gid=2066284077">on the shared spreadsheet</a>
+for direct utilization within the tool.</p>
+
+<p>The ETC GUI offers a quick overview of essential instrument parameters and constraints,
+along with insights into tradeoffs, potential optimizations and mitigation strategies.
+Plots dynamically adjust as parameters are modified.</p>
+
+<h3>Interest and Philosophy</h3>
+<p>Exposure Time Calculators are integral tools for optimizing observational strategies in
+astronomy, typically tailored to specific instruments. <em>Generic ETC</em> takes a different
+route: a broadly applicable, generic ETC built on a shared instrument database.</p>
+
+<p>Beyond the nominal use of predicting the SNR of a source given the site, instrument and
+observation parameters, it allows analyzing the evolution of the SNR with any instrument
+parameter — useful to examine instrument efficiency, explore SNR evolution under different
+scenarios, and run trade studies. The current database already encompasses more than 20
+instruments, some with several channels or configurations. Predictions have been
+cross-checked with ETC-42 on several spectrograph designs.</p>
+
+<h2>Outputs (this web app)</h2>
+
+<h3>SNR visualization</h3>
+<p>The SNR plot offers a straightforward depiction of noise budgets concerning various
+variables that can be fine-tuned or mitigated to enhance instrument sensitivity:</p>
+<ul>
+  <li><strong>Panel 1 — Noise budget.</strong> Noise from each source (Signal, Dark, Sky, RN, CIC, Extra) in electrons per pixel per exposure, plus the quadratic sum.</li>
+  <li><strong>Panel 2 — Contributions stack.</strong> The mean electron-per-pixel value for each component (pre-stacking), scaled by the number of pixels used.</li>
+  <li><strong>Panel 3 — SNR stack.</strong> The relative fractions of all noise sources per resolution element over N frames, and the resulting SNR.</li>
+  <li><strong>Panel 4 — Surface brightness limits.</strong> log<sub>10</sub> of the SNR=5 limiting surface brightness per pixel, per resolution element, and per source.</li>
+</ul>
+
+<div class="callout">
+  <strong>Not in this web version.</strong> The original notebook also includes:
+  <ul style="margin-top:4px">
+    <li>A <em>spectra simulator</em> (single &amp; stacked detector images, histograms, profiles)</li>
+    <li>An <em>IFU cube simulator</em> (3D spatio-spectral data cubes for IFS instruments)</li>
+    <li>Wavelength-dependent throughput / atmospheric transmission curves</li>
+    <li>Pre-loaded source spectra (galaxy SED, QSO templates) and emission cubes</li>
+    <li>EMCCD photon-counting threshold optimisation</li>
+  </ul>
+  For those, use the Python notebook at
+  <a href="https://github.com/vpicouet/generic-etc">vpicouet/generic-etc</a>.
+</div>
+
+<h2>Parameters</h2>
+
+<p>All instrument parameters can be used as the x-axis to analyze their impact on SNR.
+Their units are described in the
+<a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit?usp=sharing">instrument spreadsheet</a>
+(as remarks) and in slider tooltips.</p>
+
+<h3>Source</h3>
+<ul>
+  <li><strong>Flux</strong> (F): source surface brightness in <code>erg/cm²/s/arcsec²/Å</code>.</li>
+  <li><strong>Sky</strong> (S): sky background illumination in <code>erg/cm²/s/arcsec²/Å</code>.</li>
+  <li><strong>Source extension</strong> (σ<sub>x</sub>): spatial extent of the source in arcsec (σ).</li>
+  <li><strong>Source's line width</strong> (σ<sub>λ</sub>): spectral extent of the source / emission line in Å.</li>
+</ul>
+
+<h3>Observing strategy</h3>
+<ul>
+  <li><strong>Observed wavelength</strong> (λ): effective wavelength in nm.</li>
+  <li><strong>Exposure time</strong> (t<sub>exp</sub>): individual frame exposure time in seconds.</li>
+  <li><strong>Total acquisition time</strong> (T<sub>tot</sub>): total acquisition time in hours.</li>
+  <li><strong>Atmospheric transmission</strong> (Atm<sub>%</sub>): %/100.</li>
+  <li><strong>λ Stack</strong>: number of spectral pixels stacked.</li>
+  <li><strong>Readout time</strong>: time between exposures (seconds).</li>
+</ul>
+
+<h3>Instrument design</h3>
+<ul>
+  <li><strong>Collecting area</strong> (A): physical collecting area in m².</li>
+  <li><strong>Plate scale</strong> (P): pixel plate scale in ″/pix.</li>
+  <li><strong>Throughput</strong> (T<sub>%</sub>): instrument throughput at effective wavelength (not including detector QE and atmosphere).</li>
+  <li><strong>Spatial resolution</strong> (R<sub>mask</sub>, R<sub>det</sub>): at the mask and at the detector.</li>
+  <li><strong>Throughput FWHM</strong> (imager mode): bandpass FWHM in Å.</li>
+</ul>
+
+<h3>Spectrograph design</h3>
+<ul>
+  <li><strong>Spectral resolution</strong> (R<sub>λ</sub>): λ[Å] / dλ[Å].</li>
+  <li><strong>Slit width</strong> (Sw): slit / slice / fiber width in ″.</li>
+  <li><strong>Slit length</strong> (Sl): slit / slice / fiber length in ″.</li>
+  <li><strong>Dispersion</strong> (d): Å/pix at the detector.</li>
+  <li><strong>Bandwidth</strong>: total spectrograph bandwidth in Å.</li>
+  <li><strong>IFS</strong>: convert the slit/fiber design into a slicer / fiber-IFS. The flux normally lost at the slit is transferred to neighboring fibers/slices.</li>
+</ul>
+
+<h3>Detector</h3>
+<ul>
+  <li><strong>Quantum efficiency</strong> (QE<sub>%</sub>).</li>
+  <li><strong>Dark current</strong> (D): e-/pix/hour.</li>
+  <li><strong>Read noise</strong> (RN): e-/pix.</li>
+  <li><strong>Cosmic-ray pixel loss</strong> (CR<sub>%</sub>): fraction of pixels lost per second.</li>
+  <li><strong>Extra background</strong> (B): additional straylight in e-/pix/hour.</li>
+  <li><strong>EM gain</strong> (G): EMCCD amplification gain.</li>
+  <li><strong>CIC</strong>: clock-induced charge for EMCCDs (e-/pix).</li>
+  <li><strong>γ-Threshold</strong>: enables EMCCD photon-counting mode.</li>
+</ul>
+
+<h2>Important features</h2>
+<ul>
+  <li>Simplicity to add any instrument (just edit the shared spreadsheet).</li>
+  <li>Real-time computation in the browser.</li>
+  <li>Works for almost any spectrograph or spectro-imager: slit, slitless, prism, fiber IFS, slicer IFS.</li>
+  <li>Visualize the evolution of (noise, contributions, SNR, limiting surface brightness) with any parameter — for tradeoff analysis or instrument/observation/reduction optimization.</li>
+  <li>Easy instrument comparison.</li>
+</ul>
+
+<h2>Noise budget — formulas</h2>
+
+<h3>Sky and signal</h3>
+<p>Sky and signal contributions are first converted from
+<code>erg/cm²/s/asec²/Å</code> to <code>photons/cm²/s/sr/Å</code> (continuum unit):</p>
+<pre>CU = F / [ (h·c/λ) · (π / (180·3600))² ]</pre>
+
+<p>The wavelength dependency in the formula is explicit. Flux is expressed per Å with a
+Gaussian profile so that the user can simulate either a continuum or an unresolved line.</p>
+
+<p>Both contributions are then converted into electrons per pixel:</p>
+<pre>S [e-/pix/exp] = S<sub>CU</sub> · Sw<sub>str</sub> · d<sub>Å/pix</sub> · t<sub>exp</sub> · Atm<sub>%</sub> · A · T<sub>%</sub> · QE<sub>%</sub></pre>
+
+<h3>Other contributions</h3>
+<p>Dark current and straylight are given in e-/pix/hour:</p>
+<pre>D [e-/pix/exp] = D<sub>e-/pix/h</sub> · t<sub>exp</sub> / 3600</pre>
+<p>CIC (clock-induced charges, only relevant for EMCCDs) is already in e-/pix/exp.
+Read noise is also in e-/pix/exp.</p>
+
+<h3>Conversion to noise</h3>
+<p>Each contribution is then converted to noise by taking the square root, accounting
+for the effective number of frames and the resolution element size:</p>
+<pre>N<sub>contrib</sub> = sqrt(contrib · ENF · N<sub>images</sub> · Size<sub>res</sub>)</pre>
+<p>The effective number of frames is:</p>
+<pre>N<sub>images</sub> = (T<sub>tot,s</sub> / (t<sub>exp</sub> + t<sub>RO</sub>)) · (1 − CR<sub>%</sub>)</pre>
+<p>For electron-amplified CCDs (EMCCDs):</p>
+<ul>
+  <li>Read noise is divided by the amplification gain: <code>RN' = RN / G</code>.</li>
+  <li>An excess noise factor of √2 is used to account for the stochastic amplification (unless photon-counting / thresholding is applied).</li>
+</ul>
+
+<h2>Adding an instrument</h2>
+<p>To add a new instrument, edit the shared
+<a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit?usp=sharing">Google spreadsheet</a>
+("In progress" tab). Once all characteristics are indicated, the instrument is moved to the main
+tab and immediately becomes available in this app (use the <em>Reload</em> button under
+"Data source" in the controls panel).</p>
+
+<h2>Use the original notebook (full features)</h2>
+<pre><code>conda create --name etc python=3.12
+conda activate etc
+git clone https://github.com/vpicouet/generic-etc.git
+cd generic-etc
+pip install -r requirements.txt
+open notebooks/ETC.ipynb</code></pre>
+
+<div class="footer">
+  Migrated from <a href="https://github.com/vpicouet/generic-etc">vpicouet/generic-etc</a>
+  — port of <code>Observation.py</code> → JavaScript / D3.
+  This web version covers the SNR calculator only.
+</div>
+
+</main>
+</body>
+</html>

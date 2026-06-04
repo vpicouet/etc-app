@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Generic ETC — SNR calculator</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+  :root{
+    --bg:#f7f7f7; --panel:#ffffff; --line:#e2e2e2; --text:#1a1a1a; --muted:#666;
+    --accent:#348ABD; --accent2:#E24A33;
+    --header-h: 38px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font:13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    height:100%;width:100%;overflow:hidden}
+
+  /* Header */
+  header{height:var(--header-h);display:flex;align-items:center;gap:10px;padding:0 12px;
+    border-bottom:1px solid var(--line);background:#fff;position:relative;z-index:5}
+  header h1{margin:0;font-size:14px;font-weight:600;flex:0 0 auto}
+  header nav{flex:1;display:flex;gap:6px;align-items:center}
+  header nav a{font-size:12px;color:var(--muted);text-decoration:none;padding:3px 8px;border:1px solid transparent;border-radius:3px}
+  header nav a.active,header nav a:hover{background:#f0f0f0;color:var(--text);border-color:var(--line)}
+  header .meta{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  /* App grid — fills the remaining viewport */
+  .app{display:grid;grid-template-columns: minmax(0,1fr) 480px;gap:8px;padding:8px;
+    height: calc(100vh - var(--header-h)); width:100%}
+  #plot-wrap{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+    padding:6px;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+  #controls{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+    padding:8px;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+
+  /* Top row controls */
+  .topbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex:0 0 auto}
+  .topbar > *{flex:0 0 auto}
+  label.kv{display:flex;align-items:center;gap:4px;font-size:11.5px;color:var(--muted)}
+  select,input[type="text"],input[type="number"]{font:12px inherit;padding:2px 4px;
+    border:1px solid #ccc;border-radius:3px;background:#fff;color:var(--text)}
+  button{font:12px inherit;padding:3px 8px;border:1px solid #ccc;background:#fff;
+    border-radius:3px;cursor:pointer}
+  button:hover{background:#f0f0f0}
+  .check{display:flex;align-items:center;gap:3px;font-size:11.5px;color:#333}
+
+  /* Accordions */
+  .acc{border:1px solid var(--line);border-radius:4px;background:#fff}
+  .acc > summary{padding:5px 8px;cursor:pointer;font-weight:600;font-size:12px;
+    background:#f3f3f3;border-radius:4px 4px 0 0;list-style:none;
+    display:flex;justify-content:space-between;align-items:center;user-select:none}
+  .acc[open] > summary{border-bottom:1px solid var(--line)}
+  .acc > summary::after{content:"▾";color:var(--muted);font-size:10px}
+  .acc[open] > summary::after{content:"▴"}
+  .acc-body{padding:6px 8px}
+
+  /* Slider rows */
+  .slider-row{display:grid;grid-template-columns: 130px 1fr 78px;gap:6px;
+    align-items:center;margin-bottom:4px}
+  .slider-row label{font-size:11px;color:var(--muted)}
+  .slider-row input[type="range"]{width:100%;accent-color:var(--accent)}
+  .slider-row .val{font-size:11px;text-align:right;color:var(--text);
+    font-variant-numeric:tabular-nums}
+  .flags-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+
+  /* Plot */
+  #status{font-size:11px;color:var(--muted);padding:2px 4px;flex:0 0 auto}
+  #status.err{color:#c00}
+  #plot{flex:1 1 auto;min-height:0;width:100%}
+  .plot-axis text{font-size:10px;fill:#333}
+  .plot-axis path,.plot-axis line{stroke:#888;shape-rendering:crispEdges}
+  .legend{font-size:10.5px;fill:#222}
+  .vline{stroke:#000;stroke-width:1.2;stroke-dasharray:3,3;pointer-events:none}
+  .ax-title{font-size:11px;fill:#222;font-weight:600}
+
+  details.sheet{margin-top:auto;flex:0 0 auto}
+  details.sheet summary{cursor:pointer;color:var(--muted);font-size:11px}
+  details.sheet input{width:100%;margin-top:4px;font-size:11px;padding:2px 4px;
+    border:1px solid #ccc;border-radius:3px}
+
+  /* === Responsive: mobile === */
+  @media (max-width: 820px){
+    html,body{overflow:auto}
+    .app{grid-template-columns: 1fr;height:auto;padding:6px}
+    #plot-wrap{height:55vh;min-height:380px}
+    #controls{max-height:none;overflow:visible}
+    .slider-row{grid-template-columns: 110px 1fr 70px}
+    header nav{flex-wrap:wrap}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Generic ETC</h1>
+  <nav>
+    <a href="./" class="active">App</a>
+    <a href="./info.html">Info</a>
+    <a href="https://github.com/vpicouet/etc-app" target="_blank">GitHub</a>
+    <a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit" target="_blank">Instrument DB</a>
+  </nav>
+  <span id="meta" class="meta"></span>
+</header>
+
+<div class="app">
+  <div id="plot-wrap">
+    <div id="status">Loading instruments…</div>
+    <svg id="plot" preserveAspectRatio="none"></svg>
+  </div>
+
+  <div id="controls">
+    <div class="topbar">
+      <label class="kv">Instrument <select id="instrument"></select></label>
+      <label class="kv">X axis <select id="xaxis"></select></label>
+      <label class="kv">SNR <select id="snr_res">
+        <option>per pix</option>
+        <option selected>per Res elem</option>
+        <option>per Source</option>
+        <option>per Source per 2λpix</option>
+      </select></label>
+      <label class="check"><input type="checkbox" id="xlog" checked> xlog</label>
+      <label class="check"><input type="checkbox" id="ylog"> ylog</label>
+      <button id="reset" title="Reset all parameters to defaults">↺</button>
+    </div>
+
+    <div id="accordions"></div>
+
+    <details class="sheet">
+      <summary>Data source (Google Sheet)</summary>
+      <input id="sheet_id" value="1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU"/>
+      <input id="sheet_name" value="instruments.csv"/>
+      <button id="reload" style="margin-top:4px">Reload</button>
+    </details>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================================
+   1. CONSTANTS + HELPERS
+   ========================================================================== */
+const COLORS = ['#E24A33','#988ED5','#FBC15E','#348ABD','#8EBA42','#FFB5B8','#777777'];
+const NAMES  = ["Signal","Dark current","Sky","Read noise","CIC","Extra background"];
+
+function lin(n,a,b){const o=new Array(n);const d=(b-a)/(n-1);for(let i=0;i<n;i++)o[i]=a+d*i;return o}
+function log(n,a,b){a=Math.max(a,1e-30);const la=Math.log10(a),lb=Math.log10(Math.max(b,a*1.0001));const o=new Array(n);const d=(lb-la)/(n-1);for(let i=0;i<n;i++)o[i]=10**(la+d*i);return o}
+function space(n,a,b,xlog){return (xlog && a>=0) ? log(n, a===0?1e-4:a, b) : lin(n,a,b)}
+function erf(x){const s=Math.sign(x);x=Math.abs(x);const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;const t=1/(1+p*x);const y=1-(((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);return s*y}
+function normSf(x,scale){if(scale<=0)return x>0?0:1;const z=x/scale;return 0.5*(1-erf(z/Math.SQRT2))}
+function convert_ergs2LU(flux, wave_nm){const wave=wave_nm*1e-7;const E=6.62e-27*3e10/wave;const a=Math.PI/(180*3600);return flux/(E*a*a)}
+function convert_LU2ergs(LU, wave_nm){const wave=wave_nm*1e-7;const E=6.62e-27*3e10/wave;const a=Math.PI/(180*3600);return LU*E*a*a}
+function calculate_photon_counting_RN_noise(RN){
+  const f = r=>{
+    if (r<0.3) return 2*normSf(0.5, r);
+    if (r>0.5) return r;
+    const noise_low = 2*normSf(0.5, 0.3);
+    const t = (r-0.3)/0.2;
+    return noise_low*(1-t) + 0.5*t;
+  };
+  return typeof RN==="number" ? f(RN) : RN.map(f);
+}
+function fmtNum(v){if(!isFinite(v))return "—";return (Math.abs(v)<1e-3||Math.abs(v)>=1e4) ? v.toExponential(2) : (+v).toFixed(2)}
+function argClosest(a,v){let best=0,d=Infinity;for(let i=0;i<a.length;i++){const dd=Math.abs(a[i]-v);if(dd<d){d=dd;best=i}}return best}
+function safeLog10(v){return v>0 ? Math.log10(v) : NaN}
+
+/* ============================================================================
+   2. PHYSICS (port of Observation.initilize)
+   ========================================================================== */
+function computeObservation(p){
+  const N = p.xArr.length;
+  const arrify = v => (typeof v==="number")? Array(N).fill(v) : v.slice();
+  let Signal=arrify(p.Signal), Sky=arrify(p.Sky), Dark_current=arrify(p.Dark_current),
+      RN=arrify(p.RN), CIC_charge=arrify(p.CIC_charge), extra_background=arrify(p.extra_background),
+      EM_gain=arrify(p.EM_gain), exposure_time=arrify(p.exposure_time),
+      readout_time=arrify(p.readout_time), acquisition_time=arrify(p.acquisition_time),
+      QE=arrify(p.QE), Throughput=arrify(p.Throughput), Atmosphere=arrify(p.Atmosphere),
+      Collecting_area=arrify(p.Collecting_area), pixel_scale=arrify(p.pixel_scale),
+      Spectral_resolution=arrify(p.Spectral_resolution), dispersion=arrify(p.dispersion),
+      Slitwidth=arrify(p.Slitwidth), Slitlength=arrify(p.Slitlength),
+      PSF_RMS_mask=arrify(p.PSF_RMS_mask), PSF_RMS_det=arrify(p.PSF_RMS_det),
+      Size_source=arrify(p.Size_source), Line_width=arrify(p.Line_width),
+      wavelength=arrify(p.wavelength), cosmic_ray_loss_per_sec=arrify(p.cosmic_ray_loss_per_sec),
+      Bandwidth=arrify(p.Bandwidth), Throughput_FWHM=arrify(p.Throughput_FWHM),
+      lambda_stack=arrify(p.lambda_stack);
+
+  const IFS = !!p.IFS, spectro = !!p.spectrograph, counting_mode = !!p.counting_mode;
+  const SNR_res = p.SNR_res || "per pix";
+  const fsr = 2.35, arcsec2str = Math.pow(Math.PI/180/3600, 2);
+
+  Signal = Signal.map(s => s>1 ? Math.pow(10, -(s-20.08)/2.5)*2.06e-16 : s);
+  for(let i=0;i<N;i++){ if (Math.abs(Slitlength[i]-Slitwidth[i])<1e-12) Signal[i] *= Math.PI/4; }
+
+  let flux_fraction = new Array(N).fill(1);
+  for(let i=0;i<N;i++){
+    const f1 = (1+erf(Slitlength[i]/(2*Math.SQRT2*PSF_RMS_mask[i]))) - 1;
+    let f = f1;
+    if (!IFS) f *= ((1+erf(Slitwidth[i]/(2*Math.SQRT2*PSF_RMS_mask[i]))) - 1);
+    flux_fraction[i] = isFinite(f) ? f : 1;
+  }
+  const ff_slit = flux_fraction;
+
+  const PSF_lambda_pix = new Array(N);
+  for(let i=0;i<N;i++) PSF_lambda_pix[i] = 10*wavelength[i]/Spectral_resolution[i]/dispersion[i];
+
+  const source_size = new Array(N), elem_size = new Array(N), pixels_total_source = new Array(N);
+  for(let i=0;i<N;i++){
+    if (spectro){
+      const sspec = Math.max(1, Math.sqrt(PSF_lambda_pix[i]**2 + Math.pow(Math.min(Line_width[i],Bandwidth[i])/dispersion[i],2)));
+      source_size[i] = Math.max(Math.min(Size_source[i]*fsr, Slitlength[i])/pixel_scale[i], 1) * sspec;
+      pixels_total_source[i] = source_size[i] * (IFS ? Math.ceil(Math.sqrt(Size_source[i]**2+PSF_RMS_mask[i]**2)*fsr/Slitwidth[i]) : 1);
+      elem_size[i] = Math.ceil(Math.min(PSF_RMS_mask[i]*fsr, Slitlength[i])/pixel_scale[i]) *
+        Math.ceil(Math.sqrt(Math.min(PSF_RMS_det[i]/pixel_scale[i], PSF_lambda_pix[i])**2 + Math.min(Line_width[i]/dispersion[i], PSF_lambda_pix[i])**2)) *
+        (IFS ? Math.ceil(PSF_RMS_mask[i]*fsr/Slitwidth[i]) : 1);
+    } else {
+      source_size[i] = Math.pow(Size_source[i]*fsr/pixel_scale[i], 2);
+      elem_size[i]   = Math.pow(PSF_RMS_det[i]*fsr/pixel_scale[i], 2);
+      pixels_total_source[i] = source_size[i];
+    }
+  }
+
+  let number_pixels_used = new Array(N);
+  if (SNR_res==="per pix") number_pixels_used.fill(1);
+  else if (SNR_res==="per Res elem") for(let i=0;i<N;i++) number_pixels_used[i] = Math.ceil(elem_size[i]);
+  else if (SNR_res==="per Source") for(let i=0;i<N;i++) number_pixels_used[i] = Math.ceil(pixels_total_source[i]);
+  else {
+    if (spectro && IFS){
+      for(let i=0;i<N;i++){
+        const spatial_pix_per_slicer = Slitwidth[i]/pixel_scale[i];
+        const spectral_pix_adaptive = Math.max(2, Math.pow(2, Math.floor(Math.log2(spatial_pix_per_slicer))));
+        const nslices = Math.sqrt(Size_source[i]**2 + PSF_RMS_mask[i]**2)/Slitwidth[i];
+        const pixels_spat_total = (1/pixel_scale[i])*nslices;
+        pixels_total_source[i] = pixels_spat_total * spectral_pix_adaptive;
+        number_pixels_used[i] = pixels_total_source[i];
+        source_size[i] = (pixels_spat_total/nslices) * spectral_pix_adaptive;
+      }
+    } else for(let i=0;i<N;i++) number_pixels_used[i] = Math.ceil(pixels_total_source[i]);
+  }
+
+  const ENF = new Array(N);
+  for(let i=0;i<N;i++) ENF[i] = (counting_mode || EM_gain[i]<2) ? 1 : 2;
+
+  const Dark_current_f = new Array(N), Dark_current_noise = new Array(N), CIC_noise = new Array(N);
+  for(let i=0;i<N;i++){
+    Dark_current_f[i] = Dark_current[i]*exposure_time[i]/3600;
+    Dark_current_noise[i] = Math.sqrt(Dark_current_f[i]*ENF[i]);
+    CIC_noise[i] = Math.sqrt(CIC_charge[i]*ENF[i]);
+  }
+
+  const Photon_fraction_kept = new Array(N).fill(1), RN_fraction_kept = new Array(N).fill(1);
+  const QE_eff = new Array(N), effective_area = new Array(N);
+  for(let i=0;i<N;i++){
+    QE_eff[i] = Photon_fraction_kept[i]*QE[i];
+    effective_area[i] = QE_eff[i]*Throughput[i]*Atmosphere[i]*(Collecting_area[i]*100*100);
+  }
+
+  const cosmic_ray_loss = new Array(N);
+  for(let i=0;i<N;i++) cosmic_ray_loss[i] = Math.min(cosmic_ray_loss_per_sec[i]*(exposure_time[i]+readout_time[i]/2), 1);
+
+  const sourceSizeAfter = new Array(N), slitSizeAfter = new Array(N);
+  for(let i=0;i<N;i++){
+    if (SNR_res==="per Source per 2λpix" && IFS && spectro){
+      let slicer_eff;
+      if (Slitwidth[i]>=1.0) slicer_eff = 1.38;
+      else if (Slitwidth[i]>=0.5) slicer_eff = Math.max(0.69, Size_source[i]);
+      else slicer_eff = Size_source[i];
+      sourceSizeAfter[i] = Size_source[i]*slicer_eff;
+      slitSizeAfter[i]   = Size_source[i]*slicer_eff;
+    } else {
+      const a = Math.min(Size_source[i]*fsr, Slitlength[i]);
+      sourceSizeAfter[i] = a * (IFS ? Size_source[i] : Math.min(Size_source[i]*fsr, Slitwidth[i]));
+      slitSizeAfter[i]   = a * (IFS ? Math.max(Size_source[i], Slitwidth[i]) : Slitwidth[i]);
+    }
+  }
+
+  const factor_CU2el = new Array(N), factor_CU2el_sky = new Array(N);
+  for(let i=0;i<N;i++){
+    if (spectro){
+      if (SNR_res==="per Source per 2λpix" && IFS){
+        const spatial_pix_per_slicer = Slitwidth[i]/pixel_scale[i];
+        const spectral_bin_pixels = Math.max(2, Math.pow(2, Math.floor(Math.log2(spatial_pix_per_slicer))));
+        const spectral_bin_A = spectral_bin_pixels * dispersion[i]*10.0;
+        factor_CU2el[i]     = effective_area[i]*arcsec2str*sourceSizeAfter[i]*spectral_bin_A/pixels_total_source[i];
+        factor_CU2el_sky[i] = effective_area[i]*arcsec2str*slitSizeAfter[i]  *spectral_bin_A/pixels_total_source[i];
+      } else {
+        const lw = Math.min(Line_width[i], Bandwidth[i]);
+        factor_CU2el[i]     = effective_area[i]*arcsec2str*lw*sourceSizeAfter[i]/pixels_total_source[i];
+        factor_CU2el_sky[i] = effective_area[i]*arcsec2str*Math.max(lw, dispersion[i])*slitSizeAfter[i]/pixels_total_source[i];
+      }
+    } else {
+      factor_CU2el[i] = pixel_scale[i]*pixel_scale[i]*Throughput_FWHM[i];
+      factor_CU2el_sky[i] = factor_CU2el[i];
+    }
+  }
+
+  const N_images = new Array(N), N_images_true = new Array(N);
+  for(let i=0;i<N;i++){
+    N_images[i] = acquisition_time[i]*3600/(exposure_time[i]+readout_time[i]);
+    N_images_true[i] = N_images[i]*(1-cosmic_ray_loss[i]);
+  }
+
+  const sky = new Array(N), Sky_noise = new Array(N), Signal_LU = new Array(N), Signal_el = new Array(N), signal_noise = new Array(N);
+  for(let i=0;i<N;i++){
+    const Sky_CU_i = convert_ergs2LU(Sky[i], wavelength[i]);
+    sky[i] = Sky_CU_i*factor_CU2el_sky[i]*exposure_time[i];
+    Sky_noise[i] = Math.sqrt(sky[i]*ENF[i]);
+    Signal_LU[i] = convert_ergs2LU(Signal[i], wavelength[i]);
+    Signal_el[i] = Signal_LU[i]*factor_CU2el[i]*exposure_time[i]*ff_slit[i];
+    signal_noise[i] = Math.sqrt(Signal_el[i]*ENF[i]);
+  }
+
+  const RN_after_gain = new Array(N);
+  for(let i=0;i<N;i++) RN_after_gain[i] = RN[i]*RN_fraction_kept[i]/EM_gain[i];
+  const RN_final = calculate_photon_counting_RN_noise(RN_after_gain);
+
+  const Additional_background = new Array(N), Additional_background_noise = new Array(N);
+  for(let i=0;i<N;i++){
+    Additional_background[i] = extra_background[i]/3600*exposure_time[i];
+    Additional_background_noise[i] = Math.sqrt(Additional_background[i]*ENF[i]);
+  }
+
+  const N_resol_element_A = spectro ? Array(N).fill(1) : lambda_stack;
+  const factor = new Array(N), Signal_resolution = new Array(N), Total_noise_final = new Array(N), SNR = new Array(N);
+  for(let i=0;i<N;i++){
+    factor[i] = Math.sqrt(number_pixels_used[i])*Math.sqrt(N_resol_element_A[i])*Math.sqrt(N_images_true[i]);
+    Signal_resolution[i] = Signal_el[i]*factor[i]*factor[i];
+    const inside = signal_noise[i]**2 + Dark_current_noise[i]**2 + Additional_background_noise[i]**2 + Sky_noise[i]**2 + CIC_noise[i]**2 + RN_final[i]**2;
+    Total_noise_final[i] = factor[i]*Math.sqrt(inside);
+    SNR[i] = Signal_resolution[i]/Total_noise_final[i];
+  }
+
+  const noises_per_exp = new Array(N), noises = new Array(N), electrons_per_pix = new Array(N);
+  for(let i=0;i<N;i++){
+    const sp = Math.sqrt(number_pixels_used[i]);
+    noises_per_exp[i] = [
+      sp*signal_noise[i], sp*Dark_current_noise[i], sp*Sky_noise[i],
+      sp*RN_final[i], sp*CIC_noise[i], sp*Additional_background_noise[i],
+      sp*Math.sqrt(Signal_el[i])
+    ];
+    noises[i] = [
+      signal_noise[i]*factor[i], Dark_current_noise[i]*factor[i], Sky_noise[i]*factor[i],
+      RN_final[i]*factor[i], CIC_noise[i]*factor[i], Additional_background_noise[i]*factor[i],
+      Signal_resolution[i]
+    ];
+    electrons_per_pix[i] = [Signal_el[i], Dark_current_f[i], sky[i], 0*RN_final[i], CIC_charge[i], Additional_background[i]];
+  }
+
+  const n_sigma = 5;
+  const SB_lim_per_pix = new Array(N), SB_lim_per_res = new Array(N), SB_lim_per_source = new Array(N);
+  for(let i=0;i<N;i++){
+    const sn_nf = signal_noise[i]*factor[i], Tnf = Total_noise_final[i];
+    const val = (n_sigma**2 * ENF[i] + n_sigma * Math.sqrt(4*Tnf*Tnf - 4*sn_nf*sn_nf + ENF[i]**2 * n_sigma**2))/2;
+    const lu_per_e = Signal_LU[i]/Signal_resolution[i];
+    const sig_ergs = convert_LU2ergs(val*lu_per_e, wavelength[i]);
+    SB_lim_per_pix[i] = sig_ergs;
+    SB_lim_per_res[i] = sig_ergs/elem_size[i];
+    SB_lim_per_source[i] = sig_ergs/source_size[i];
+  }
+
+  return { x: p.xArr, N, noises_per_exp, noises, electrons_per_pix,
+    Signal_el, Dark_current_f, sky, RN_final, CIC_charge, Additional_background,
+    SNR, Total_noise_final, number_pixels_used, source_size, elem_size,
+    SB_lim_per_pix, SB_lim_per_res, SB_lim_per_source, factor, Signal_resolution };
+}
+
+/* ============================================================================
+   3. PARAMETERS — grouped into accordions (NO "Image" group)
+   ========================================================================== */
+const PARAMS = {
+  Signal:       {tab:"Source", label:"Source", unit:"erg/cm²/s/asec²/Å", min:-21, max:-9, step:0.1, log:true, default_log:-17, fmt:e=>e.toExponential(2), xable:true},
+  Size_source:  {tab:"Source", label:"σ source", unit:"\"", min:0.01, max:100, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
+  Sky:          {tab:"Source", label:"Sky", unit:"erg/cm²/s/asec²/Å", min:-23, max:-15, step:0.1, log:true, default_log:-18, fmt:e=>e.toExponential(2), xable:true},
+  Line_width:   {tab:"Source", label:"Eq width", unit:"Å", min:0.01, max:100, step:0.1, log:false, default:6, fmt:v=>v.toFixed(2), xable:true},
+
+  Atmosphere:        {tab:"Strategy", label:"Atmosphere", unit:"", min:0.1, max:1, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
+  acquisition_time:  {tab:"Strategy", label:"Taq", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true},
+  readout_time:      {tab:"Strategy", label:"Readout time", unit:"s", min:0, max:300, step:1, log:false, default:0, fmt:v=>v.toFixed(0), xable:true},
+  exposure_time:     {tab:"Strategy", label:"Exposure time", unit:"s", min:1, max:3005, step:1, log:false, default:50, fmt:v=>v.toFixed(0), xable:true},
+  wavelength:        {tab:"Strategy", label:"Observed λ", unit:"nm", min:50, max:1000, step:0.1, log:false, default:200, fmt:v=>v.toFixed(1), xable:true},
+  lambda_stack:      {tab:"Strategy", label:"λ Stack", unit:"pix", min:1, max:200, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true},
+
+  Collecting_area: {tab:"Instrument", label:"Area", unit:"m²", min:-2, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true},
+  pixel_scale:     {tab:"Instrument", label:"Pixel scale", unit:"\"/pix", min:0.01, max:5, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
+  Throughput:      {tab:"Instrument", label:"Throughput", unit:"", min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>v.toFixed(2), xable:true},
+  PSF_RMS_mask:    {tab:"Instrument", label:"Mask σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
+  PSF_RMS_det:     {tab:"Instrument", label:"Det σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true},
+  Throughput_FWHM: {tab:"Instrument", label:"TH FWHM (imager)", unit:"Å", min:1, max:5, step:0.01, log:true, default_log:2, fmt:v=>v.toFixed(2), xable:false},
+
+  Spectral_resolution: {tab:"Spectrograph", label:"R = λ/Δλ", unit:"", min:90, max:10000, step:1, log:false, default:1000, fmt:v=>v.toFixed(0), xable:true},
+  Slitwidth:           {tab:"Spectrograph", label:"Slit width", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true},
+  Slitlength:          {tab:"Spectrograph", label:"Slit length", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true},
+  dispersion:          {tab:"Spectrograph", label:"Dispersion", unit:"Å/pix", min:0.01, max:5, step:0.001, log:false, default:0.5, fmt:v=>v.toFixed(3), xable:true},
+  Bandwidth:           {tab:"Spectrograph", label:"Bandwidth", unit:"Å", min:1, max:5000, step:1, log:false, default:200, fmt:v=>v.toFixed(0), xable:true},
+
+  QE:                      {tab:"Detector", label:"QE", unit:"", min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>v.toFixed(2), xable:true},
+  RN:                      {tab:"Detector", label:"Read noise", unit:"e-/pix", min:0.01, max:120, step:0.1, log:false, default:2, fmt:v=>v.toFixed(2), xable:true},
+  Dark_current:            {tab:"Detector", label:"Dark current", unit:"e-/pix/h", min:0, max:50, step:0.001, log:false, default:0.1, fmt:v=>v.toFixed(3), xable:true},
+  extra_background:        {tab:"Detector", label:"Extra background", unit:"e-/pix/h", min:0, max:200, step:0.1, log:false, default:0, fmt:v=>v.toFixed(2), xable:true},
+  cosmic_ray_loss_per_sec: {tab:"Detector", label:"CR loss", unit:"/s", min:0, max:0.1, step:0.0001, log:false, default:0, fmt:v=>v.toFixed(4), xable:true},
+  EM_gain:                 {tab:"Detector", label:"EM gain", unit:"e-/e-", min:1, max:3500, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true},
+  CIC_charge:              {tab:"Detector", label:"CIC charge", unit:"e-/pix", min:0, max:0.07, step:0.001, log:false, default:0.001, fmt:v=>v.toFixed(4), xable:true},
+};
+const GROUPS = ["Source","Strategy","Instrument","Spectrograph","Detector"];
+
+const FLAGS = { IFS:false, spectrograph:true, counting_mode:false };
+
+const STATE = { instruments:null, current_instrument:null, values:{}, xKey:"exposure_time" };
+
+function defaultValueFor(p){ return p.log ? Math.pow(10, p.default_log) : p.default; }
+function initValuesToDefault(){ for (const [k,p] of Object.entries(PARAMS)) STATE.values[k]=defaultValueFor(p); }
+
+/* ============================================================================
+   4. LOAD GSHEET
+   ========================================================================== */
+async function loadInstruments(sheet_id, sheet_name){
+  const url = `https://docs.google.com/spreadsheets/d/${sheet_id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet_name)}`;
+  const r = await fetch(url, {mode:"cors"});
+  if (!r.ok) throw new Error(`HTTP ${r.status} loading gsheet`);
+  const txt = await r.text();
+  const rows = d3.csvParseRows(txt);
+  if (rows.length<2) throw new Error("Empty sheet");
+  const header = rows[0];
+  const instrNames = header.slice(3).filter(n=>n && n.trim().length);
+  const dict = {}; const char_units = {};
+  for (const n of instrNames) dict[n] = {};
+  for (let r=1;r<rows.length;r++){
+    const row = rows[r]; const key = row[1]; const unit = row[2];
+    if (!key) continue;
+    char_units[key] = unit||"";
+    for (let c=0;c<instrNames.length;c++){
+      const raw = row[3+c];
+      if (raw==null || raw==="") continue;
+      const f = parseFloat(raw);
+      dict[instrNames[c]][key] = isFinite(f) ? f : raw;
+    }
+  }
+  STATE.instruments = {colnames: instrNames, char_units, dict};
+  return STATE.instruments;
+}
+
+function applyInstrument(name){
+  const d = STATE.instruments.dict[name]; if (!d) return;
+  STATE.current_instrument = name;
+  for (const k of Object.keys(PARAMS)){
+    if (k in d && typeof d[k]==="number" && isFinite(d[k])) STATE.values[k] = d[k];
+  }
+  if ("IFS" in d) FLAGS.IFS = !!d.IFS;
+  for (const k of Object.keys(PARAMS)) syncSlider(k);
+  const ifsEl = document.getElementById("flag_IFS"); if (ifsEl) ifsEl.checked = FLAGS.IFS;
+}
+
+/* ============================================================================
+   5. UI — ACCORDIONS
+   ========================================================================== */
+function buildUI(){
+  const root = d3.select("#accordions");
+  root.selectAll("*").remove();
+  GROUPS.forEach(group=>{
+    const det = root.append("details").attr("class","acc").attr("open",true);
+    det.append("summary").text(group);
+    const body = det.append("div").attr("class","acc-body");
+    for (const [k,p] of Object.entries(PARAMS)){
+      if (p.tab!==group) continue;
+      const row = body.append("div").attr("class","slider-row");
+      row.append("label").text(p.label + (p.unit?` [${p.unit}]`:""));
+      const v = STATE.values[k];
+      const sliderVal = p.log ? Math.log10(Math.max(v, Math.pow(10,p.min))) : v;
+      const step = p.log ? (p.step||0.05) : p.step;
+      const inp = row.append("input").attr("type","range").attr("data-key",k)
+        .attr("min", p.min).attr("max", p.max).attr("step", step).attr("value", sliderVal);
+      const val = row.append("div").attr("class","val").attr("data-val",k).text(p.fmt(v));
+      inp.on("input", function(){
+        const s = +this.value;
+        STATE.values[k] = p.log ? Math.pow(10, s) : s;
+        val.text(p.fmt(STATE.values[k]));
+        scheduleUpdate();
+      });
+    }
+    if (group==="Spectrograph"){
+      const r = body.append("div").attr("class","flags-row");
+      r.append("label").attr("class","check").html('<input type="checkbox" id="flag_IFS"> IFS');
+      r.append("label").attr("class","check").html('<input type="checkbox" id="flag_spectro" checked> Spectrograph');
+      document.getElementById("flag_IFS").addEventListener("change",function(){FLAGS.IFS=this.checked;scheduleUpdate();});
+      document.getElementById("flag_spectro").addEventListener("change",function(){FLAGS.spectrograph=this.checked;scheduleUpdate();});
+    }
+    if (group==="Detector"){
+      const r = body.append("div").attr("class","flags-row");
+      r.append("label").attr("class","check").html('<input type="checkbox" id="flag_counting"> γ-Threshold (photon counting)');
+      document.getElementById("flag_counting").addEventListener("change",function(){FLAGS.counting_mode=this.checked;scheduleUpdate();});
+    }
+  });
+}
+
+function syncSlider(k){
+  const p = PARAMS[k]; if (!p) return;
+  const v = STATE.values[k];
+  const inp = document.querySelector(`input[data-key="${k}"]`);
+  if (!inp) return;
+  inp.value = p.log ? Math.log10(Math.max(v, Math.pow(10,p.min))) : v;
+  const val = document.querySelector(`[data-val="${k}"]`);
+  if (val) val.textContent = p.fmt(v);
+}
+
+/* ============================================================================
+   6. PLOT — 4 stacked panels, sized to the plot container
+   ========================================================================== */
+function getPlotDim(){
+  const el = document.getElementById("plot-wrap");
+  const sb = document.getElementById("status");
+  return { w: el.clientWidth - 12, h: Math.max(360, el.clientHeight - (sb? sb.offsetHeight : 0) - 12) };
+}
+function makePanels(W,H,n){
+  const margin = {l:64, r:140, t:10, b:32};
+  const innerW = W - margin.l - margin.r;
+  const innerH = H - margin.t - margin.b;
+  const ph = innerH / n;
+  return Array.from({length:n}, (_,i)=>({ x:margin.l, y:margin.t + i*ph, w:innerW, h:ph - 6 }));
+}
+
+function drawPlot(res){
+  const svg = d3.select("#plot");
+  svg.selectAll("*").remove();
+  const dim = getPlotDim();
+  svg.attr("width", dim.w).attr("height", dim.h).attr("viewBox", `0 0 ${dim.w} ${dim.h}`);
+  const xKey = STATE.xKey, x = res.x;
+  const xlog = document.getElementById("xlog").checked;
+  const ylog = document.getElementById("ylog").checked;
+  const xmin = d3.min(x), xmax = d3.max(x);
+  const xScale = (xlog && xmin>0)
+    ? d3.scaleLog().domain([Math.max(xmin,1e-30), xmax]).range([0,1])
+    : d3.scaleLinear().domain([xmin,xmax]).range([0,1]);
+
+  const panels = makePanels(dim.w, dim.h, 4);
+
+  // Panel 0: noise lines
+  const noiseSeries = [];
+  for (let s=0; s<6; s++){
+    noiseSeries.push({ name:NAMES[s], color:COLORS[s], y: x.map((_,i)=>res.noises_per_exp[i][s]) });
+  }
+  const quadSum = x.map((_,i)=>{
+    let q=0; for (let s=0;s<6;s++) q += res.noises_per_exp[i][s]**2;
+    return Math.sqrt(q);
+  });
+
+  const contribStack = stackify(x.length, 6, (i,s)=> res.number_pixels_used[i]*res.electrons_per_pix[i][s]);
+  const snrStack = stackify(x.length, 6, (i,s)=>{
+    const Tn = res.Total_noise_final[i]; return (isFinite(Tn)&&Tn>0) ? res.SNR[i]*res.noises[i][s]**2/(Tn*Tn) : 0;
+  });
+  const sb_pix = x.map((_,i)=>safeLog10(res.SB_lim_per_pix[i]));
+  const sb_res = x.map((_,i)=>safeLog10(res.SB_lim_per_res[i]));
+  const sb_src = x.map((_,i)=>safeLog10(res.SB_lim_per_source[i]));
+
+  const currentVal = STATE.values[xKey];
+  const iCur = currentVal!=null ? argClosest(x, currentVal) : Math.floor(x.length/2);
+
+  // ===== Panel 0 =====
+  const p0 = panels[0];
+  const allY0 = noiseSeries.flatMap(s=>s.y).concat(quadSum);
+  drawPanel(svg, p0, x, xScale, allY0, ylog, "Noise (e-/exp)", g=>{
+    noiseSeries.forEach(s=>{
+      g.append("path").datum(s.y).attr("fill","none").attr("stroke",s.color).attr("stroke-width",1.6)
+        .attr("d", lineGen(x, p0, xScale, allY0, ylog));
+    });
+    g.append("path").datum(quadSum).attr("fill","none").attr("stroke","#000").attr("stroke-width",1.8).attr("stroke-opacity",0.7)
+      .attr("d", lineGen(x, p0, xScale, allY0, ylog));
+    legendBlock(g, p0, [
+      ...noiseSeries.map(s=>({name:`${s.name}: ${fmtNum(s.y[iCur])}`, color:s.color})),
+      {name:`Quad sum: ${fmtNum(quadSum[iCur])}`, color:"#000"}
+    ]);
+  });
+
+  // ===== Panel 1 =====
+  const p1 = panels[1];
+  const max1 = d3.max(contribStack[contribStack.length-1].y1);
+  drawStackPanel(svg, p1, x, xScale, contribStack, max1, ylog, "e-/exp (× npix)", iCur,
+    NAMES.map((n,j)=>({name:n, color:COLORS[j]})), (j)=>res.number_pixels_used[iCur]*res.electrons_per_pix[iCur][j]);
+
+  // ===== Panel 2 =====
+  const p2 = panels[2];
+  const max2 = d3.max(snrStack[snrStack.length-1].y1);
+  drawStackPanel(svg, p2, x, xScale, snrStack, max2, ylog, "SNR contributions", iCur,
+    NAMES.map((n,j)=>({name:n, color:COLORS[j]})), (j)=>{
+      const Tn = res.Total_noise_final[iCur];
+      return Tn>0 ? res.SNR[iCur]*res.noises[iCur][j]**2/(Tn*Tn) : 0;
+    });
+  svg.append("text").attr("x", p2.x+p2.w-6).attr("y", p2.y+12).attr("text-anchor","end").attr("class","ax-title")
+    .text(`SNR = ${res.SNR[iCur].toFixed(2)}  (max ${d3.max(res.SNR).toFixed(2)})`);
+
+  // ===== Panel 3 =====
+  const p3 = panels[3];
+  const allY3 = sb_pix.concat(sb_res).concat(sb_src).filter(v=>isFinite(v));
+  drawPanel(svg, p3, x, xScale, allY3, false, "log₁₀ ergs/cm²/s/asec²", g=>{
+    [["per pix",sb_pix,"#000",1],["per Res",sb_res,"#000",0.5],["per Source",sb_src,"#000",0.3]].forEach(([n,arr,c,a])=>{
+      g.append("path").datum(arr).attr("fill","none").attr("stroke",c).attr("stroke-opacity",a).attr("stroke-width",1.8)
+        .attr("d", lineGen(x, p3, xScale, allY3, false));
+    });
+    legendBlock(g, p3, [
+      {name:`SB SNR=5 / pix: ${fmtNum(sb_pix[iCur])}`, color:"#000"},
+      {name:`SB SNR=5 / res: ${fmtNum(sb_res[iCur])}`, color:"#000", alpha:0.5},
+      {name:`SB SNR=5 / src: ${fmtNum(sb_src[iCur])}`, color:"#000", alpha:0.3}
+    ]);
+  });
+
+  // x label
+  svg.append("text").attr("x", panels[0].x + panels[0].w/2).attr("y", dim.h-6)
+    .attr("text-anchor","middle").attr("class","ax-title").text(xKey);
+
+  // current-value vertical line
+  if (currentVal!=null && currentVal>=xmin && currentVal<=xmax){
+    const xp = xScale(currentVal);
+    panels.forEach(pr=>{
+      svg.append("line").attr("class","vline").attr("x1", pr.x + xp*pr.w).attr("x2", pr.x + xp*pr.w).attr("y1", pr.y).attr("y2", pr.y+pr.h);
+    });
+  }
+}
+
+function stackify(N, S, get){
+  const layers = Array.from({length:S}, ()=>({y0:new Array(N), y1:new Array(N)}));
+  for (let i=0;i<N;i++){
+    let acc = 0;
+    for (let s=0;s<S;s++){
+      const v = get(i,s); const vv = isFinite(v)?v:0;
+      layers[s].y0[i] = acc; layers[s].y1[i] = acc + vv; acc += vv;
+    }
+  }
+  return layers;
+}
+
+function lineGen(x, panel, xScale, allY, ylog){
+  const yDom = d3.extent(allY.filter(v=>isFinite(v)));
+  let yScale;
+  if (ylog){
+    const minPos = d3.min(allY.filter(v=>v>0));
+    yScale = d3.scaleLog().domain([Math.max(minPos||1e-6,1e-30), Math.max(yDom[1], (minPos||1e-6)*10)]).range([panel.h, 0]);
+  } else {
+    yScale = d3.scaleLinear().domain([Math.min(yDom[0],0), yDom[1]||1]).range([panel.h, 0]);
+  }
+  return d3.line().defined((_,i)=>isFinite(x[i])).x((_,i)=>panel.x + xScale(x[i])*panel.w).y(v=>panel.y + yScale(v));
+}
+
+function drawPanel(svg, panel, x, xScale, allY, ylog, title, drawLines){
+  const yDom = d3.extent(allY.filter(v=>isFinite(v)));
+  let yScale;
+  if (ylog){
+    const minPos = d3.min(allY.filter(v=>v>0));
+    yScale = d3.scaleLog().domain([Math.max(minPos||1e-6,1e-30), Math.max(yDom[1], (minPos||1e-6)*10)]).range([panel.h, 0]);
+  } else {
+    yScale = d3.scaleLinear().domain([Math.min(yDom[0],0), yDom[1]||1]).range([panel.h, 0]);
+  }
+  const xAxisScale = xScale.copy().range([panel.x, panel.x+panel.w]);
+  const yAxisScale = yScale.copy().range([panel.y+panel.h, panel.y]);
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${panel.y+panel.h})`)
+    .call(d3.axisBottom(xAxisScale).ticks(5));
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${panel.x},0)`)
+    .call(d3.axisLeft(yAxisScale).ticks(4));
+  svg.append("text").attr("class","ax-title")
+    .attr("transform",`translate(${panel.x-50},${panel.y+panel.h/2}) rotate(-90)`)
+    .attr("text-anchor","middle").text(title);
+  drawLines(svg.append("g"));
+}
+
+function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, legend, getCur){
+  let yScale;
+  if (ylog){
+    let minPos = Infinity;
+    for (const lay of layers) for (const v of lay.y1) if (v>0 && v<minPos) minPos = v;
+    if (!isFinite(minPos)) minPos = 1e-3;
+    yScale = d3.scaleLog().domain([Math.max(minPos,1e-30), Math.max(maxY, minPos*10)]).range([panel.h, 0]);
+  } else {
+    yScale = d3.scaleLinear().domain([0, Math.max(maxY,1e-12)]).range([panel.h, 0]);
+  }
+  const xAxisScale = xScale.copy().range([panel.x, panel.x+panel.w]);
+  const yAxisScale = yScale.copy().range([panel.y+panel.h, panel.y]);
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${panel.y+panel.h})`).call(d3.axisBottom(xAxisScale).ticks(5));
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${panel.x},0)`).call(d3.axisLeft(yAxisScale).ticks(4));
+  svg.append("text").attr("class","ax-title")
+    .attr("transform",`translate(${panel.x-50},${panel.y+panel.h/2}) rotate(-90)`)
+    .attr("text-anchor","middle").text(title);
+  const yDomMin = yScale.domain()[0];
+  for (let s=0;s<layers.length;s++){
+    const lay = layers[s];
+    const a = d3.area()
+      .x((_,i)=>panel.x + xScale(x[i])*panel.w)
+      .y0((_,i)=>panel.y + yScale(Math.max(lay.y0[i] || yDomMin, yDomMin)))
+      .y1((_,i)=>panel.y + yScale(Math.max(lay.y1[i] || yDomMin, yDomMin)));
+    svg.append("path").datum(lay.y1.map((_,i)=>i))
+      .attr("fill", legend[s].color).attr("fill-opacity",0.7).attr("d", a);
+  }
+  const totalCur = legend.reduce((acc,_,j)=>acc + (getCur(j)||0), 0);
+  legendBlock(svg.append("g"), panel, legend.map((L,j)=>{
+    const v = getCur(j)||0;
+    const pct = totalCur>0 ? (100*v/totalCur).toFixed(1) : "0";
+    return {name:`${L.name}: ${fmtNum(v)} (${pct}%)`, color:L.color};
+  }));
+}
+
+function legendBlock(g, panel, items){
+  const x0 = panel.x + panel.w + 6;
+  let y0 = panel.y + 8;
+  items.forEach(it=>{
+    g.append("rect").attr("x",x0).attr("y",y0-8).attr("width",9).attr("height",9)
+      .attr("fill",it.color).attr("fill-opacity", it.alpha!=null?it.alpha:0.85);
+    g.append("text").attr("x",x0+13).attr("y",y0+1).attr("class","legend").text(it.name);
+    y0 += 12;
+  });
+}
+
+/* ============================================================================
+   7. ORCHESTRATION
+   ========================================================================== */
+let updateScheduled = false;
+function scheduleUpdate(){ if (updateScheduled) return; updateScheduled = true; requestAnimationFrame(()=>{ updateScheduled = false; doUpdate(); }); }
+
+function doUpdate(){
+  const xKey = STATE.xKey, p = PARAMS[xKey]; if (!p) return;
+  const xlog = document.getElementById("xlog").checked;
+  const xa = p.log ? Math.pow(10, p.min) : p.min;
+  const xb = p.log ? Math.pow(10, p.max) : p.max;
+  const N = 60;
+  const xArr = space(N, xa, xb, xlog);
+  const pa = {};
+  for (const k of Object.keys(PARAMS)) pa[k] = (k===xKey) ? xArr : STATE.values[k];
+  pa.xArr = xArr;
+  pa.IFS = FLAGS.IFS; pa.spectrograph = FLAGS.spectrograph; pa.counting_mode = FLAGS.counting_mode;
+  pa.SNR_res = document.getElementById("snr_res").value;
+  let res;
+  try { res = computeObservation(pa); }
+  catch(e){ d3.select("#status").classed("err",true).text("Compute error: "+e.message); console.error(e); return; }
+  const iCur = argClosest(xArr, STATE.values[xKey]);
+  d3.select("#status").classed("err",false)
+    .text(`Instrument: ${STATE.current_instrument||"—"}   |   x = ${xKey}   |   SNR = ${res.SNR[iCur].toFixed(2)}`);
+  document.getElementById("meta").textContent = STATE.current_instrument
+    ? `${STATE.current_instrument} • SNR ${res.SNR[iCur].toFixed(2)}` : "";
+  drawPlot(res);
+}
+
+/* ============================================================================
+   8. MAIN
+   ========================================================================== */
+function buildXAxisOptions(){
+  const sel = d3.select("#xaxis"); sel.selectAll("*").remove();
+  GROUPS.forEach(t=>{
+    const og = sel.append("optgroup").attr("label", t.toUpperCase());
+    for (const [k,p] of Object.entries(PARAMS)){
+      if (p.tab!==t || !p.xable) continue;
+      og.append("option").attr("value",k).text(k);
+    }
+  });
+  sel.property("value", STATE.xKey).on("change", function(){ STATE.xKey=this.value; scheduleUpdate(); });
+}
+function buildInstrumentOptions(){
+  const sel = d3.select("#instrument"); sel.selectAll("*").remove();
+  for (const n of STATE.instruments.colnames) sel.append("option").attr("value",n).text(n);
+  const pref = STATE.instruments.colnames.includes("FIREBall-2 2025") ? "FIREBall-2 2025" : STATE.instruments.colnames[0];
+  sel.property("value", pref).on("change", function(){ applyInstrument(this.value); scheduleUpdate(); });
+  applyInstrument(pref);
+}
+
+async function main(){
+  initValuesToDefault();
+  buildUI();
+  buildXAxisOptions();
+  try {
+    await loadInstruments(document.getElementById("sheet_id").value, document.getElementById("sheet_name").value);
+    buildInstrumentOptions();
+    d3.select("#status").classed("err",false).text(`Loaded ${STATE.instruments.colnames.length} instruments.`);
+  } catch (e){
+    d3.select("#status").classed("err",true).text("Failed to load sheet: "+e.message+" — using defaults.");
+    console.error(e);
+  }
+  document.getElementById("xlog").addEventListener("change", scheduleUpdate);
+  document.getElementById("ylog").addEventListener("change", scheduleUpdate);
+  document.getElementById("snr_res").addEventListener("change", scheduleUpdate);
+  document.getElementById("reset").addEventListener("click", ()=>{ initValuesToDefault(); for (const k of Object.keys(PARAMS)) syncSlider(k); scheduleUpdate(); });
+  document.getElementById("reload").addEventListener("click", async ()=>{
+    try {
+      await loadInstruments(document.getElementById("sheet_id").value, document.getElementById("sheet_name").value);
+      buildInstrumentOptions(); scheduleUpdate();
+    } catch (e){ d3.select("#status").classed("err",true).text("Reload failed: "+e.message); }
+  });
+  window.addEventListener("resize", ()=>scheduleUpdate());
+  scheduleUpdate();
+}
+main();
+</script>
+</body>
+</html>
