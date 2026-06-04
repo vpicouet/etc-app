@@ -1560,10 +1560,13 @@ function drawImageView(){
   attachImageHover();
   attachImageColorscaleDrag();
 
+  const slitW_pix = pa.Slitwidth  / pa.pixel_scale;
+  const slitH_pix = pa.Slitlength / pa.pixel_scale;
+  const slitStr = `slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″ (${slitW_pix.toFixed(1)}×${slitH_pix.toFixed(1)} px)`;
   document.getElementById("img-single-title").textContent =
-    `Single exposure (${sim.W}×${sim.H} pix = ${(sim.W*sim.xPhys_per_pix).toFixed(0)}Å × ${(sim.H*sim.yPhys_per_pix).toFixed(1)}″) — slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″`;
+    `Single exposure  ·  ${sim.W}×${sim.H} pix = ${(sim.W*sim.xPhys_per_pix).toFixed(0)}Å × ${(sim.H*sim.yPhys_per_pix).toFixed(1)}″  ·  ${slitStr}`;
   document.getElementById("img-stack-title").textContent =
-    `Stacked (${sim.N_stack} frames, T_acq=${(STATE.values.acquisition_time).toFixed(1)}h) — slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″`;
+    `Stacked  ·  ${sim.N_stack} frames, T_acq=${(STATE.values.acquisition_time).toFixed(1)}h  ·  ${slitStr}`;
 
   // ===== Profiles SVG (spatial avg + spectral avg, single & stacked) =====
   drawProfiles(sim);
@@ -1710,16 +1713,8 @@ function drawSlitOverlay(svgId, pa, sim){
   const h  = Math.min(sim.H, slitH_pix);
   svg.append("rect").attr("x", Math.max(0,x0)).attr("y", Math.max(0,y0))
     .attr("width", w).attr("height", h)
-    .attr("fill","none").attr("stroke","#ff3")
+    .attr("fill","none").attr("stroke","#000")
     .attr("stroke-width", Math.max(0.6, sim.H*0.012));
-  // Label above the slit rectangle
-  svg.append("text")
-    .attr("x", Math.max(2, x0))
-    .attr("y", Math.max(8, y0-2))
-    .attr("fill","#ff3")
-    .attr("font-size", Math.max(8, sim.H*0.07))
-    .attr("font-family","-apple-system, sans-serif").attr("font-weight","600")
-    .text(`slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″  (= ${slitW_pix.toFixed(1)} × ${slitH_pix.toFixed(1)} px)`);
 }
 
 /* Compute spectral profile (mean over a few central rows) and spatial profile (mean over a few central cols). */
