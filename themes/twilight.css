@@ -52,6 +52,11 @@ body[data-mode="dark"]{
   --accent:#7DD3FC;
   --accent-2:#C4B5FD;
   --shadow-elev-1:0 2px 8px rgba(0,0,0,0.5);
+  /* Plot tokens for dark mode — curves become white so they remain visible on the dark plot bg.
+     Axes/text stay as defined in the base dark palette (already light grey). */
+  --plot-bg:#10142a;
+  --plot-curve:#e6e8ff;
+  --plot-curve-2:#b8bce0;
 }
 
 /* Subtle gradient backdrop in dark mode */

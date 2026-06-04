@@ -62,6 +62,8 @@
     --plot-vline-hover:#E24A33;
     --plot-ax-title:#222222;
     --plot-bg:#ffffff;
+    --plot-curve:#000000;       /* main curve stroke (quad sum, stack profile, SB limits…) */
+    --plot-curve-2:#444444;     /* secondary darker stroke */
   }
 
   /* Dark palette baseline. Themes can re-override any of these. */
@@ -89,14 +91,16 @@
     --img-bg:#000000;
     --shadow-elev-1:0 1px 2px rgba(0,0,0,0.4);
 
-    /* Dark-adapted plot tokens — affect the bottom analysis sub-plots (Spectro / IFS bottom row)
-       and the SNR plot axes so the white background + dark text isn't broken. */
+    /* Dark-adapted plot tokens. Axes/text stay legible on dark bg, and the main curve stroke
+       (used for quad-sum, stacked profile, SB limits…) becomes white instead of pure black. */
     --plot-axis-text:#c9d1d9;
     --plot-axis-line:#5a6473;
     --plot-legend-text:#e6edf3;
     --plot-vline:#e6edf3;
     --plot-ax-title:#e6edf3;
     --plot-bg:#1a1f27;
+    --plot-curve:#ffffff;
+    --plot-curve-2:#cccccc;
   }
 
   /* ===== BASE ================================================================== */
@@ -234,7 +238,7 @@
   }
 </style>
 <!-- Theme stylesheet placed AFTER the inline style so its CSS variables effectively override the defaults. -->
-<link id="theme-css" rel="stylesheet" href="themes/default.css">
+<link id="theme-css" rel="stylesheet" href="themes/twilight.css">
 </head>
 <body>
 
@@ -250,12 +254,8 @@
   </nav>
   <span id="meta" class="meta"></span>
   <span class="theme-controls">
-    <select id="theme-select" title="Visual theme — only changes UI chrome, never the plots.">
-      <option value="default">Default</option>
-      <option value="caltech">Caltech</option>
-      <option value="nasa">NASA Mission Control</option>
-      <option value="twilight">Astronomical Twilight</option>
-      <option value="terminal">High-density Terminal</option>
+    <select id="theme-select" style="display:none" title="Visual theme.">
+      <option value="twilight" selected>Astronomical Twilight</option>
     </select>
     <button id="theme-toggle" title="Toggle dark / light mode">🌙</button>
   </span>
@@ -374,6 +374,12 @@ function calculate_photon_counting_RN_noise(RN){
 function fmtNum(v){if(!isFinite(v))return "—";return (Math.abs(v)<1e-3||Math.abs(v)>=1e4) ? v.toExponential(2) : (+v).toFixed(2)}
 function argClosest(a,v){let best=0,d=Infinity;for(let i=0;i<a.length;i++){const dd=Math.abs(a[i]-v);if(dd<d){d=dd;best=i}}return best}
 function safeLog10(v){return v>0 ? Math.log10(v) : NaN}
+
+/* Read a CSS variable from <body> (used to theme hardcoded plot stroke colors). */
+function cssVar(name, fallback){
+  const v = getComputedStyle(document.body).getPropertyValue(name).trim();
+  return v || fallback;
+}
 
 /* ============================================================================
    PRNG + sample distributions for the image simulator
@@ -1375,10 +1381,10 @@ function drawPlot(res){
   const allY0 = noiseSeries.flatMap(s=>s.y).concat(quadSum);
   drawPanel(svg, p0, x, xScale, allY0, ylog, "Noise (e-/exp)", g=>{
     noiseSeries.forEach(s=>{
-      g.append("path").datum(s.y).attr("fill","none").attr("stroke",s.color).attr("stroke-width",2.8)
+      g.append("path").datum(s.y).attr("fill","none").attr("stroke",s.color).attr("stroke-width",5.0)
         .attr("d", lineGen(x, p0, xScale, allY0, ylog));
     });
-    g.append("path").datum(quadSum).attr("fill","none").attr("stroke","#000").attr("stroke-width",3.4).attr("stroke-opacity",0.7)
+    g.append("path").datum(quadSum).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",6.5).attr("stroke-opacity",0.7)
       .attr("d", lineGen(x, p0, xScale, allY0, ylog));
     legendBlock(g, p0, [
       ...noiseSeries.map(s=>({name:`${s.name}: ${fmtNum(s.y[iCur])}`, color:s.color})),
@@ -1407,8 +1413,9 @@ function drawPlot(res){
   const p3 = panels[3];
   const allY3 = sb_pix.concat(sb_res).concat(sb_src).filter(v=>isFinite(v));
   drawPanel(svg, p3, x, xScale, allY3, false, "log₁₀ ergs/cm²/s/asec²", g=>{
-    [["per pix",sb_pix,"#000",1],["per Res",sb_res,"#000",0.5],["per Source",sb_src,"#000",0.3]].forEach(([n,arr,c,a])=>{
-      g.append("path").datum(arr).attr("fill","none").attr("stroke",c).attr("stroke-opacity",a).attr("stroke-width",1.8)
+    const cc = cssVar("--plot-curve","#000");
+    [["per pix",sb_pix,cc,1],["per Res",sb_res,cc,0.5],["per Source",sb_src,cc,0.3]].forEach(([n,arr,c,a])=>{
+      g.append("path").datum(arr).attr("fill","none").attr("stroke",c).attr("stroke-opacity",a).attr("stroke-width",4.0)
         .attr("d", lineGen(x, p3, xScale, allY3, false));
     });
     legendBlock(g, p3, [
@@ -1418,25 +1425,20 @@ function drawPlot(res){
     ]);
   });
 
-  // x label
-  svg.append("text").attr("x", panels[0].x + panels[0].w/2).attr("y", dim.h-6)
-    .attr("text-anchor","middle").attr("class","ax-title").text(xKey);
+  // x-axis label — placed top-right of the last panel (just inside its top edge) to avoid colliding
+  // with the panel's own tick labels at the bottom.
+  const lastP = panels[panels.length-1];
+  svg.append("text").attr("x", lastP.x + lastP.w - 8).attr("y", lastP.y + 12)
+    .attr("text-anchor","end").attr("class","ax-title").text(`x: ${xKey}`);
 
-  // current-value vertical line (DRAGGABLE: dragging it updates STATE.values[xKey] and re-renders)
+  // Visible vertical line at the current value (the draggable hit zone is appended
+  // AFTER the hover-tooltip rect below so it sits on top in z-order and actually catches mousedown).
+  let snrVlineX = null;
   if (currentVal!=null && currentVal>=xmin && currentVal<=xmax){
     const xp = xScale(currentVal);
+    snrVlineX = xp;   // remember for the hit zones added later
     panels.forEach(pr=>{
       const lineX = pr.x + xp*pr.w;
-      // Wide invisible hit area for easy grabbing (12 SVG units total)
-      svg.append("rect").attr("class","vline-hit")
-        .attr("x", lineX - 6).attr("y", pr.y).attr("width", 12).attr("height", pr.h)
-        .attr("fill", "transparent").style("cursor","ew-resize")
-        .on("mousedown", function(e){
-          if (e.button !== 0 || e.ctrlKey) return;
-          e.preventDefault(); e.stopPropagation();
-          STATE._snrXDrag = { panel: pr, xScale, dim, dragging: true };
-        });
-      // Visible vertical line
       svg.append("line").attr("class","vline")
         .attr("x1", lineX).attr("x2", lineX).attr("y1", pr.y).attr("y2", pr.y+pr.h)
         .style("pointer-events","none");
@@ -1512,6 +1514,22 @@ function drawPlot(res){
       tip.style.top  = ty + "px";
     }).on("mouseleave", ()=>{ tip.style.display="none"; });
   });
+
+  // Draggable hit zone for the SNR vertical cursor — appended LAST so it stays on top of
+  // the hover-tooltip rect and actually receives mousedown.
+  if (snrVlineX != null){
+    panels.forEach(pr=>{
+      const lineX = pr.x + snrVlineX*pr.w;
+      svg.append("rect").attr("class","vline-hit")
+        .attr("x", lineX - 7).attr("y", pr.y).attr("width", 14).attr("height", pr.h)
+        .attr("fill", "transparent").style("cursor","ew-resize")
+        .on("mousedown", function(e){
+          if (e.button !== 0 || e.ctrlKey) return;
+          e.preventDefault(); e.stopPropagation();
+          STATE._snrXDrag = { panel: pr, xScale, dim, dragging: true };
+        });
+    });
+  }
 }
 
 function stackify(N, S, get){
@@ -1615,7 +1633,9 @@ function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, 
       .y0((_,i)=>panel.y + yScale(Math.max(lay.y0[i] || yDomMin, yDomMin)))
       .y1((_,i)=>panel.y + yScale(Math.max(lay.y1[i] || yDomMin, yDomMin)));
     svg.append("path").datum(lay.y1.map((_,i)=>i))
-      .attr("fill", legend[s].color).attr("fill-opacity",0.7).attr("d", a);
+      .attr("fill", legend[s].color).attr("fill-opacity",0.7)
+      .attr("stroke", legend[s].color).attr("stroke-width", 1.2).attr("stroke-opacity",0.95)
+      .attr("d", a);
   }
   const totalCur = legend.reduce((acc,_,j)=>acc + (getCur(j)||0), 0);
   legendBlock(svg.append("g"), panel, legend.map((L,j)=>{
@@ -2033,10 +2053,12 @@ function drawCurveSvg(svgId, single, stack, xValues, title, xLabel){
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(4).tickFormat(d3.format(".3~g")));
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3).tickFormat(d3.format(".2~g")));
   const line = d3.line().x((_,i)=>xs(xValues[i])).y(v=>ys(v));
-  svg.append("path").datum(Array.from(single)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.55).attr("stroke-width",1.1).attr("d", line);
-  svg.append("path").datum(Array.from(stack)).attr("fill","none").attr("stroke","#000").attr("stroke-width",1.6).attr("d", line);
+  // Noisy single = wider with alpha so the clean stacked curve underneath stays visible
+  svg.append("path").datum(Array.from(single)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",3.0).attr("d", line);
+  svg.append("path").datum(Array.from(stack)).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",3.2).attr("d", line);
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title").text(title);
-  svg.append("text").attr("x", (W+m.l-m.r)/2).attr("y", H-4).attr("text-anchor","middle").style("font-size","10px").style("fill","#444").text(xLabel);
+  // x-label moved to top-right (just above the panel) so it doesn't collide with tick labels
+  svg.append("text").attr("x", W-m.r-4).attr("y", m.t-2).attr("text-anchor","end").style("font-size","10px").style("fill","var(--plot-axis-text,#444)").text(xLabel);
 }
 
 function drawProfiles(sim){
@@ -2064,11 +2086,11 @@ function drawOptics(sim, pa){
 
   // Throughput (blue)
   svg.append("path").datum(Array.from(sim.throughputCurve))
-    .attr("fill","none").attr("stroke","#348ABD").attr("stroke-width",1.8)
+    .attr("fill","none").attr("stroke","#348ABD").attr("stroke-width",3.5)
     .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
   // Atmosphere (red)
   svg.append("path").datum(Array.from(sim.atmCurve))
-    .attr("fill","none").attr("stroke","#E24A33").attr("stroke-width",1.5)
+    .attr("fill","none").attr("stroke","#E24A33").attr("stroke-width",3.0)
     .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
   // Sky lines (orange) — normalised to peak
   if (sim.skyLineMult){
@@ -2076,17 +2098,17 @@ function drawOptics(sim, pa){
     for (let i=0;i<sim.W;i++) if (sim.skyLineMult[i]>pk) pk = sim.skyLineMult[i];
     if (pk > 0){
       svg.append("path").datum(Array.from(sim.skyLineMult).map(v => v/pk))
-        .attr("fill","none").attr("stroke","#FBC15E").attr("stroke-width",1.2)
+        .attr("fill","none").attr("stroke","#FBC15E").attr("stroke-width",2.5)
         .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
     }
   }
-  // Spectral profile of the source (grey)
+  // Spectral profile of the source (themeable)
   if (sim.spectralProfile){
     let pk = 0;
     for (let i=0;i<sim.W;i++) if (sim.spectralProfile[i]>pk) pk = sim.spectralProfile[i];
     if (pk>0){
       svg.append("path").datum(Array.from(sim.spectralProfile).map(v => v/pk))
-        .attr("fill","none").attr("stroke","#777").attr("stroke-width",1.2).attr("stroke-dasharray","3 2")
+        .attr("fill","none").attr("stroke", cssVar("--plot-curve-2","#777")).attr("stroke-width",2.5).attr("stroke-dasharray","3 2")
         .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
     }
   }
@@ -2149,9 +2171,10 @@ function drawHistogram(sim){
     }
   }
   plotBars(hS, "#888", 0.5);
-  plotBars(hK, "#000", 0.7);
-  svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title").text("Pixel value histogram (single grey, stack black)");
-  svg.append("text").attr("x", (W+m.l-m.r)/2).attr("y", H-4).attr("text-anchor","middle").style("font-size","10px").style("fill","#444").text("Pixel value [e- or amplified e-]");
+  plotBars(hK, cssVar("--plot-curve","#000"), 0.7);
+  svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title").text("Pixel value histogram (single grey, stack curve)");
+  // x-label top-right above the panel (not below — overlaps tick labels)
+  svg.append("text").attr("x", W-m.r-4).attr("y", m.t-2).attr("text-anchor","end").style("font-size","10px").style("fill","var(--plot-axis-text,#444)").text("Pixel value [e-]");
 }
 
 /* ============================================================================
@@ -2416,11 +2439,12 @@ function drawIfsSpectrum(){
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(4).tickFormat(d3.format(".3~g")));
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3).tickFormat(d3.format(".2~g")));
   const line = d3.line().x((_,i)=>xs(xValues[i])).y(v=>ys(v));
-  svg.append("path").datum(Array.from(specSingle)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",1.1).attr("d", line);
-  svg.append("path").datum(Array.from(specStack)).attr("fill","none").attr("stroke","#000").attr("stroke-width",1.6).attr("d", line);
+  svg.append("path").datum(Array.from(specSingle)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",3.0).attr("d", line);
+  svg.append("path").datum(Array.from(specStack)).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",3.2).attr("d", line);
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title")
-    .text(`Integrated spectrum over [${r.x1.toFixed(0)}..${r.x2.toFixed(0)}] × [${r.y1.toFixed(0)}..${r.y2.toFixed(0)}] (single grey, stack black). Drag the red line to slice the cube at another λ.`);
-  svg.append("text").attr("x", (W+m.l-m.r)/2).attr("y", H-4).attr("text-anchor","middle").style("font-size","10px").style("fill","#444").text("λ [Å]");
+    .text(`Integrated spectrum over [${r.x1.toFixed(0)}..${r.x2.toFixed(0)}] × [${r.y1.toFixed(0)}..${r.y2.toFixed(0)}] — drag the red line to slice at another λ.`);
+  // x-label top-right above the panel (avoids overlap with bottom ticks)
+  svg.append("text").attr("x", W-m.r-4).attr("y", m.t-2).attr("text-anchor","end").style("font-size","10px").style("fill","var(--plot-axis-text,#444)").text("λ [Å]");
 
   // ----- Draggable vertical λ cursor -----
   const lc = IFS_STATE.lambda_center;
@@ -2719,15 +2743,11 @@ function applyMode(mode){
   if (btn) btn.textContent = (mode === "dark") ? "☀" : "🌙";
 }
 function initTheme(){
-  let theme = "default", mode = "light";
-  try {
-    theme = localStorage.getItem("etc.theme") || theme;
-    mode  = localStorage.getItem("etc.mode")  || mode;
-  } catch(e){}
-  applyTheme(theme);
+  // Theme is currently locked to "twilight" (dropdown hidden). Dark/light is user-toggleable.
+  let mode = "light";
+  try { mode = localStorage.getItem("etc.mode") || mode; } catch(e){}
+  applyTheme("twilight");
   applyMode(mode);
-  const sel = document.getElementById("theme-select");
-  if (sel) sel.addEventListener("change", e => applyTheme(e.target.value));
   const btn = document.getElementById("theme-toggle");
   if (btn) btn.addEventListener("click", () => applyMode(document.body.getAttribute("data-mode") === "dark" ? "light" : "dark"));
 }
