@@ -18,6 +18,7 @@
     --header-bg:#fff; --header-text:var(--text);
     --accent:#348ABD; --accent-2:#E24A33;
     --plot-bg:#ffffff; --plot-axis-text:#333; --plot-axis-line:#888; --plot-curve:#000;
+    --shadow-elev-1:0 1px 2px rgba(0,0,0,0.04);
   }
   body[data-mode="dark"]{
     --bg:#161a20; --bg-alt:#1c2128; --panel:#21262d;
@@ -26,13 +27,16 @@
     --header-bg:#0d1117; --header-text:#e6edf3;
     --accent:#58a6ff; --accent-2:#ff7b72;
     --plot-bg:#1a1f27; --plot-axis-text:#c9d1d9; --plot-axis-line:#5a6473; --plot-curve:#ffffff;
+    --shadow-elev-1:0 1px 2px rgba(0,0,0,0.4);
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
-    font:13px/1.45 var(--font-ui)}
+    font:13px/1.4 var(--font-ui);
+    height:100%;width:100%;overflow:hidden}
+
   header{height:var(--header-h);display:flex;align-items:center;gap:10px;padding:0 12px;
     border-bottom:1px solid var(--line);background:var(--header-bg);color:var(--header-text);
-    position:sticky;top:0;z-index:50}
+    position:relative;z-index:5}
   header h1{margin:0;font-size:14px;font-weight:600;flex:0 0 auto}
   header nav{flex:1;display:flex;gap:6px;align-items:center}
   header nav a{font-size:12px;color:var(--muted);text-decoration:none;padding:3px 8px;
@@ -43,39 +47,56 @@
     border:1px solid var(--line);color:var(--text);border-radius:var(--radius-sm);cursor:pointer}
   #theme-toggle:hover{background:var(--bg-alt)}
 
-  main{max-width:1300px;margin:0 auto;padding:14px}
-  h2{font-size:15px;margin:18px 0 8px;color:var(--text-soft);font-weight:600;
-    text-transform:uppercase;letter-spacing:0.05em}
+  /* Main grid: scatter row | controls strip | radars row — fits exactly the viewport */
+  .app{
+    display:grid;
+    grid-template-rows: minmax(0,1fr) auto minmax(0,1fr);
+    gap:6px;
+    padding:6px;
+    height: calc(100vh - var(--header-h));
+    width:100%;
+  }
+
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
-    padding:14px;margin-bottom:14px}
+    box-shadow:var(--shadow-elev-1);min-height:0;min-width:0;overflow:hidden;display:flex}
 
-  /* Top scatter section */
-  .scatter-section{display:grid;grid-template-columns: minmax(0,1fr) 240px;gap:14px}
-  .scatter-section .ctl{display:flex;flex-direction:column;gap:8px;font-size:12.5px}
-  .scatter-section .ctl label{display:flex;align-items:center;gap:6px;color:var(--text-soft)}
-  .scatter-section .ctl select{flex:1;font:12px var(--font-ui);padding:3px 5px;
-    border:1px solid var(--line-strong);border-radius:3px;background:var(--panel);color:var(--text)}
-  .scatter-section .ctl .row{display:flex;gap:10px;align-items:center}
-  .scatter-section .ctl .row input[type=checkbox]{margin:0}
+  /* SCATTER ROW: plot left, controls right */
+  .row-scatter{display:grid;grid-template-columns: minmax(0,1fr) 230px;gap:6px;min-height:0}
+  .row-scatter > .panel{padding:0}
+  .row-scatter .ctl{padding:8px 10px;flex-direction:column;gap:6px;font-size:12px;overflow:auto}
+  .row-scatter .ctl label{display:flex;align-items:center;gap:6px;color:var(--text-soft)}
+  .row-scatter .ctl select{flex:1;font:12px var(--font-ui);padding:2px 4px;
+    border:1px solid var(--line-strong);border-radius:3px;background:var(--panel);color:var(--text);min-width:0}
+  .row-scatter .ctl .check-row{display:flex;gap:10px;align-items:center;font-size:11.5px;color:var(--text-soft)}
+  .row-scatter .ctl .check-row input[type=checkbox]{margin:0}
+  .row-scatter .ctl .ctl-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;font-weight:600}
+  .row-scatter .ctl .hint{font-size:10.5px;color:var(--muted);line-height:1.35;margin-top:4px}
+  .row-scatter .ctl .hint b{color:var(--text-soft)}
 
-  /* Radars */
-  .radar-section{display:grid;grid-template-columns: minmax(0,1fr) minmax(0,1fr);gap:14px}
-  .radar-section svg{width:100%;height:380px;background:var(--plot-bg);
-    border:1px solid var(--line);border-radius:4px;display:block}
-
-  /* Instrument multi-select */
-  .multi-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-  .multi-row label{font-size:12.5px;color:var(--muted)}
-  .multi-row select{font:12px var(--font-ui);padding:3px 5px;
+  /* CONTROLS STRIP: instrument multi-select */
+  .row-select{display:flex;align-items:center;gap:10px;padding:6px 10px;flex-wrap:wrap}
+  .row-select label{font-size:12px;color:var(--muted);flex:0 0 auto}
+  .row-select select{font:12px var(--font-ui);padding:2px 4px;
     border:1px solid var(--line-strong);border-radius:3px;background:var(--panel);color:var(--text);
-    min-width:280px;min-height:120px}
-  .multi-row .hint{font-size:11px;color:var(--muted);font-style:italic}
-  .chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;
-    background:var(--bg-alt);border:1px solid var(--line);border-radius:12px;padding:1px 8px;color:var(--text)}
-  .chip .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+    min-width:220px;height:30px}
+  .row-select .chips{display:flex;gap:5px;flex-wrap:wrap;flex:1 1 auto}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;
+    background:var(--bg-alt);border:1px solid var(--line);border-radius:11px;padding:1px 7px;color:var(--text)}
+  .chip .dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 8px}
+  .chip .x{cursor:pointer;color:var(--muted);font-weight:600;padding:0 2px}
+  .chip .x:hover{color:var(--accent-2)}
+  .row-select .hint{font-size:10.5px;color:var(--muted);font-style:italic;flex:0 0 auto}
 
-  #scatter{width:100%;height:430px;background:var(--plot-bg);
-    border:1px solid var(--line);border-radius:4px;display:block}
+  /* RADARS ROW */
+  .row-radars{display:grid;grid-template-columns:1fr 1fr;gap:6px;min-height:0}
+  .row-radars > .panel{padding:4px}
+
+  /* SVG plots stretch to fill their parent .panel */
+  .row-scatter > .panel > svg,
+  .row-radars  > .panel > svg{
+    display:block;width:100%;height:100%;background:var(--plot-bg);min-width:0;min-height:0
+  }
+
   .plot-axis text{font-size:10.5px;fill:var(--plot-axis-text);font-family:var(--font-mono)}
   .plot-axis path,.plot-axis line{stroke:var(--plot-axis-line);shape-rendering:crispEdges}
   .ax-lbl{font-size:11.5px;fill:var(--text-soft);font-style:italic}
@@ -84,13 +105,19 @@
   .radar-axis-line{stroke:var(--line);stroke-opacity:0.5;shape-rendering:crispEdges}
   .radar-label{font-size:10.5px;fill:var(--text-soft);font-family:var(--font-mono)}
   .radar-poly{fill-opacity:0.18;stroke-width:1.8;stroke-linejoin:round}
+  .radar-title{font-size:11px;fill:var(--text-soft);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.05em}
 
-  #status{font-size:11.5px;color:var(--muted);padding:4px 0}
+  #status{position:absolute;bottom:8px;right:10px;font-size:10.5px;color:var(--muted);
+    font-family:var(--font-mono);padding:2px 6px;background:rgba(0,0,0,0);pointer-events:none}
   #status.err{color:#c00}
 
-  @media (max-width: 880px){
-    .scatter-section{grid-template-columns: 1fr}
-    .radar-section{grid-template-columns: 1fr}
+  @media (max-width: 920px){
+    html,body{overflow:auto}
+    .app{grid-template-rows:auto auto auto;height:auto}
+    .row-scatter{grid-template-columns:1fr}
+    .row-scatter > .panel:first-child{height:60vh}
+    .row-radars{grid-template-columns:1fr}
+    .row-radars > .panel{height:50vh}
   }
 </style>
 <link id="theme-css" rel="stylesheet" href="themes/twilight.css">
@@ -109,60 +136,50 @@
   <span class="theme-controls"><button id="theme-toggle" title="Toggle dark / light mode">🌙</button></span>
 </header>
 
-<main>
-  <div id="status">Loading instrument database…</div>
-
-  <!-- ============================ SCATTER ============================ -->
-  <h2>Instrument scatter plot</h2>
-  <div class="panel scatter-section">
-    <svg id="scatter" preserveAspectRatio="none"></svg>
-    <div class="ctl">
-      <label>X axis <select id="sc-x"></select></label>
-      <label>Y axis <select id="sc-y"></select></label>
-      <label>Size  <select id="sc-size"></select></label>
+<div class="app">
+  <!-- ROW 1 — Scatter -->
+  <div class="row-scatter" style="min-height:0">
+    <div class="panel"><svg id="scatter" preserveAspectRatio="none"></svg></div>
+    <div class="panel ctl">
+      <div class="ctl-title">Scatter axes</div>
+      <label>X <select id="sc-x"></select></label>
+      <label>Y <select id="sc-y"></select></label>
+      <label>Size <select id="sc-size"></select></label>
       <label>Color <select id="sc-color"></select></label>
-      <div class="row">
+      <div class="check-row">
         <label><input type="checkbox" id="sc-xlog"> x-log</label>
         <label><input type="checkbox" id="sc-ylog"> y-log</label>
+        <label><input type="checkbox" id="sc-names" checked> names</label>
       </div>
-      <div class="row">
-        <label><input type="checkbox" id="sc-names" checked> show names</label>
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4">
-        Most useful axes for trade studies are <b>PSF_RMS_det</b>,
-        <b>Spectral_resolution</b>, <b>wavelength</b>, <b>Effective_area</b>,
-        <b>Collecting_area</b>, <b>FOV_size</b>, <b>Grasp</b>.
+      <div class="hint">
+        Most useful trade-study axes: <b>PSF_RMS_det</b>, <b>Spectral_resolution</b>,
+        <b>wavelength</b>, <b>Effective_area</b>, <b>Collecting_area</b>, <b>FOV_size</b>, <b>Grasp</b>.
       </div>
     </div>
   </div>
 
-  <!-- ============================ INSTRUMENT SELECTION ============================ -->
-  <h2>Instrument selection (for the radars below)</h2>
-  <div class="panel">
-    <div class="multi-row">
-      <label>Pick 2–8 instruments <small class="hint">(⌘/Ctrl-click to multi-select)</small></label>
-      <select id="instr-multi" multiple size="6"></select>
-    </div>
-    <div id="instr-chips" class="multi-row" style="margin-bottom:0"></div>
+  <!-- ROW 2 — Instrument multi-select strip -->
+  <div class="panel row-select">
+    <label>Instruments <small style="color:var(--muted);font-weight:400">(⌘/Ctrl-click to add)</small></label>
+    <select id="instr-multi" multiple size="3"></select>
+    <div id="instr-chips" class="chips"></div>
+    <span class="hint">Radars below normalise 0-1 on this set.</span>
   </div>
 
-  <!-- ============================ RADARS ============================ -->
-  <h2>Instrument vs detector radars (0–1 normalised on the selected set)</h2>
-  <div class="radar-section">
-    <div class="panel" style="padding:8px">
-      <svg id="radar-instr"></svg>
-    </div>
-    <div class="panel" style="padding:8px">
-      <svg id="radar-det"></svg>
-    </div>
+  <!-- ROW 3 — Radars -->
+  <div class="row-radars" style="min-height:0">
+    <div class="panel"><svg id="radar-instr" preserveAspectRatio="none"></svg></div>
+    <div class="panel"><svg id="radar-det"   preserveAspectRatio="none"></svg></div>
   </div>
-</main>
+</div>
+
+<div id="status">Loading instrument database…</div>
 
 <script>
 "use strict";
 
 /* ============================================================================
-   THEME (light/dark only — the page is locked to the twilight theme like the app)
+   THEME
    ========================================================================== */
 function applyMode(mode){
   if (mode!=="dark" && mode!=="light") mode = "light";
@@ -170,7 +187,7 @@ function applyMode(mode){
   try { localStorage.setItem("etc.mode", mode); } catch(e){}
   const b = document.getElementById("theme-toggle");
   if (b) b.textContent = (mode==="dark") ? "☀" : "🌙";
-  if (typeof redrawAll==="function") redrawAll();
+  if (typeof redrawAll==="function") requestAnimationFrame(()=>requestAnimationFrame(redrawAll));
 }
 (function initTheme(){
   let mode = "light";
@@ -183,16 +200,13 @@ function applyMode(mode){
 function cssVar(name, fb){ return getComputedStyle(document.body).getPropertyValue(name).trim() || fb; }
 
 /* ============================================================================
-   DATA — load the instrument DB from the same GSheet as the app, then derive metrics
+   DATA
    ========================================================================== */
 const SHEET_ID   = "1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU";
 const SHEET_NAME = "instruments.csv";
 
-const INSTR = [];   // [{name, raw:{...}, derived:{...}}]
+const INSTR = [];
 
-// Detectors block — copied from the comparison tab of the Google Sheet
-// (right-hand block: EMCCD201, EMCCD311, Good skipper, Skipper, Perfect).
-// Each row is the detector's raw value for a given metric; null = unavailable.
 const DETECTORS = [
   { name:"EMCCD201",     Efficiency:0.4091, background:0.7, Noise_per_exp:null, pix_size:13, QE:0.7 },
   { name:"EMCCD311",     Efficiency:null,   background:null, Noise_per_exp:null, pix_size:null, QE:null },
@@ -229,8 +243,6 @@ async function loadInstruments(){
   }
 }
 
-/* Derive comparison metrics from raw DB columns. Mirrors the sheet's
-   "RADAR CHART" block: dir=+1 means "bigger is better". */
 function deriveMetrics(d){
   const num = k => (typeof d[k]==="number" && isFinite(d[k])) ? d[k] : NaN;
   const Throughput  = num("Throughput");
@@ -276,18 +288,15 @@ function deriveMetrics(d){
         ? Math.max(0, (1 - Math.min(cr*(texp+tro/2), 1))) * (texp/(texp+tro)) : NaN;
 
   return {
-    E2E_throughput:    E2E,
-    Effective_area:    Aeff,
+    E2E_throughput: E2E,
+    Effective_area: Aeff,
     Spectral_resolution: R,
     Spatial_resolution_inv: SpatialRes,
     Det_noise_per_frame: det_noise_per_frame,
     Det_noise_per_time: det_noise_per_time,
-    Grasp,
-    Efficiency_CR_RO,
-    wavelength,
-    PSF_RMS_det: PSF_det,
-    Collecting_area: Coll_m2,
-    FOV_size: FOV,
+    Grasp, Efficiency_CR_RO,
+    wavelength, PSF_RMS_det: PSF_det,
+    Collecting_area: Coll_m2, FOV_size: FOV,
     Slitwidth, dispersion,
     Throughput, QE, Atmosphere,
     exposure_time: texp, readout_time: tro,
@@ -298,7 +307,20 @@ function deriveMetrics(d){
 }
 
 /* ============================================================================
-   SCATTER PLOT
+   SVG SIZING HELPER — measure SVG parent at draw time for the viewBox.
+   ========================================================================== */
+function svgSize(svgNode){
+  const parent = svgNode.parentNode;
+  const rect = parent.getBoundingClientRect();
+  // Subtract 2px for the panel border. Floor to avoid sub-pixel jitter.
+  return {
+    W: Math.max(120, Math.floor(rect.width  - 2)),
+    H: Math.max(120, Math.floor(rect.height - 2))
+  };
+}
+
+/* ============================================================================
+   SCATTER
    ========================================================================== */
 const SCATTER_AXES = [
   "PSF_RMS_det","Spectral_resolution","wavelength",
@@ -329,12 +351,11 @@ function valueOf(instr, key){
 
 function drawScatter(){
   const svg = d3.select("#scatter");
-  svg.selectAll("*").remove();
   const node = svg.node();
-  const W = Math.max(300, node.clientWidth);
-  const H = Math.max(300, node.clientHeight);
-  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
-  const m = {l:60, r:14, t:14, b:38};
+  const {W, H} = svgSize(node);
+  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  svg.selectAll("*").remove();
+  const m = {l:56, r:14, t:14, b:34};
 
   const xk = document.getElementById("sc-x").value;
   const yk = document.getElementById("sc-y").value;
@@ -363,11 +384,13 @@ function drawScatter(){
   const ys = (ylog && yMin>0)
     ? d3.scaleLog().domain([yMin, yMax]).range([H-m.b, m.t])
     : d3.scaleLinear().domain([yMin, yMax]).range([H-m.b, m.t]);
-  const sExt = d3.extent(pts.map(p=>p.s).filter(isFinite));
+  const sValues = pts.map(p=>p.s).filter(isFinite);
+  const sExt = d3.extent(sValues);
   const sScale = (isFinite(sExt[0]) && sExt[1]>sExt[0])
     ? d3.scaleSqrt().domain([sExt[0], sExt[1]]).range([4, 14])
     : (()=>6);
-  const cExt = d3.extent(pts.map(p=>p.c).filter(isFinite));
+  const cValues = pts.map(p=>p.c).filter(isFinite);
+  const cExt = d3.extent(cValues);
   const cScale = (isFinite(cExt[0]) && cExt[1]>cExt[0])
     ? d3.scaleSequential(d3.interpolateViridis).domain([cExt[0], cExt[1]])
     : (()=>cssVar("--accent","#348ABD"));
@@ -383,8 +406,8 @@ function drawScatter(){
   const g = svg.append("g");
   pts.forEach(p => {
     const cx = xs(p.x), cy = ys(p.y);
-    const rad = (typeof sScale==="function") ? sScale(isFinite(p.s)?p.s:sExt[0]) : 6;
-    const col = (typeof cScale==="function") ? cScale(isFinite(p.c)?p.c:cExt[0]) : cssVar("--accent","#348ABD");
+    const rad = (typeof sScale==="function") ? sScale(isFinite(p.s)?p.s:(sExt[0]||1)) : 6;
+    const col = (typeof cScale==="function") ? cScale(isFinite(p.c)?p.c:(cExt[0]||0)) : cssVar("--accent","#348ABD");
     const circle = g.append("circle").attr("cx", cx).attr("cy", cy).attr("r", rad)
       .attr("fill", col).attr("fill-opacity", 0.78)
       .attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width", 0.6);
@@ -407,11 +430,17 @@ function fillInstrumentMulti(defaults){
     if (defaults.includes(i.name)) opt.selected = true;
     sel.appendChild(opt);
   });
-  sel.addEventListener("change", ()=>{ drawInstrRadar(); drawDetRadar(); renderChips(); });
+  sel.addEventListener("change", ()=>{ renderChips(); requestAnimationFrame(()=>{ drawInstrRadar(); drawDetRadar(); }); });
 }
 function selectedInstruments(){
   const sel = document.getElementById("instr-multi");
   return Array.from(sel.selectedOptions).map(o => o.value).slice(0, 8);
+}
+function deselectInstrument(name){
+  const sel = document.getElementById("instr-multi");
+  Array.from(sel.options).forEach(o => { if (o.value === name) o.selected = false; });
+  renderChips();
+  requestAnimationFrame(()=>{ drawInstrRadar(); drawDetRadar(); });
 }
 function renderChips(){
   const root = document.getElementById("instr-chips");
@@ -426,20 +455,25 @@ function renderChips(){
     dot.style.background = cmap[i % cmap.length];
     chip.appendChild(dot);
     chip.appendChild(document.createTextNode(n));
+    const x = document.createElement("span");
+    x.className = "x"; x.textContent = "×";
+    x.title = "Deselect";
+    x.addEventListener("click", ()=>deselectInstrument(n));
+    chip.appendChild(x);
     root.appendChild(chip);
   });
 }
 
 /* ============================================================================
-   RADAR PLOTS
+   RADARS
    ========================================================================== */
 const RADAR_INSTR_METRICS = [
-  { key:"E2E_throughput",       label:"E2E throughput",   dir:1 },
-  { key:"Effective_area",       label:"Effective area",   dir:1 },
-  { key:"Spectral_resolution",  label:"Spectral res.",    dir:1 },
-  { key:"Spatial_resolution_inv", label:"Spatial res.",   dir:1 },
-  { key:"Det_noise_per_time",   label:"Det noise / time", dir:-1 },
-  { key:"Det_noise_per_frame",  label:"Det noise / exp",  dir:-1 }
+  { key:"E2E_throughput",         label:"E2E throughput",   dir:1 },
+  { key:"Effective_area",         label:"Effective area",   dir:1 },
+  { key:"Spectral_resolution",    label:"Spectral res.",    dir:1 },
+  { key:"Spatial_resolution_inv", label:"Spatial res.",     dir:1 },
+  { key:"Det_noise_per_time",     label:"Det noise / time", dir:-1 },
+  { key:"Det_noise_per_frame",    label:"Det noise / exp",  dir:-1 }
 ];
 const RADAR_DET_METRICS = [
   { key:"Efficiency",    label:"Efficiency (CR+RO)", dir:1 },
@@ -473,14 +507,15 @@ function buildRadarValues(metrics, getValue, selection){
 
 function drawRadar(svgId, title, metrics, getValue, selection){
   const svg = d3.select("#"+svgId);
-  svg.selectAll("*").remove();
   const node = svg.node();
-  const W = Math.max(280, node.clientWidth);
-  const H = Math.max(280, node.clientHeight);
-  svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
-  const cx = W/2, cy = H/2 + 6;
-  const R = Math.min(W, H)/2 - 56;
+  const {W, H} = svgSize(node);
+  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  svg.selectAll("*").remove();
+  const cx = W/2, cy = H/2 + 8;
+  const R = Math.max(40, Math.min(W, H)/2 - 56);
   const cmap = d3.schemeTableau10;
+
+  svg.append("text").attr("x", 10).attr("y", 16).attr("class","radar-title").text(title);
 
   if (!selection.length){
     svg.append("text").attr("x", cx).attr("y", cy).attr("text-anchor","middle").attr("class","instr-name")
@@ -505,11 +540,10 @@ function drawRadar(svgId, title, metrics, getValue, selection){
     const a = (i/N)*2*Math.PI - Math.PI/2;
     const xe = cx + R*Math.cos(a), ye = cy + R*Math.sin(a);
     svg.append("line").attr("class","radar-axis-line").attr("x1",cx).attr("y1",cy).attr("x2",xe).attr("y2",ye);
-    const lx = cx + (R+18)*Math.cos(a), ly = cy + (R+18)*Math.sin(a);
+    const lx = cx + (R+16)*Math.cos(a), ly = cy + (R+16)*Math.sin(a);
     const ta = (Math.cos(a) >  0.3) ? "start" : (Math.cos(a) < -0.3 ? "end" : "middle");
     svg.append("text").attr("class","radar-label").attr("x", lx).attr("y", ly+4).attr("text-anchor", ta).text(data[i].label);
   }
-
   selection.forEach((name, idx)=>{
     const col = cmap[idx % cmap.length];
     const pts = [];
@@ -526,9 +560,6 @@ function drawRadar(svgId, title, metrics, getValue, selection){
        .attr("fill", col).attr("stroke", col)
        .append("title").text(name);
   });
-
-  svg.append("text").attr("x", cx).attr("y", 16).attr("text-anchor","middle")
-     .attr("class","ax-lbl").text(title);
 }
 
 function drawInstrRadar(){
@@ -537,14 +568,12 @@ function drawInstrRadar(){
             (name, key)=>{
               const inst = INSTR.find(i => i.name===name);
               return inst ? inst.derived[key] : NaN;
-            },
-            sel);
+            }, sel);
 }
 
 function drawDetRadar(){
   const sel = selectedInstruments();
-  drawRadar("radar-det", "Detector profile",
-            RADAR_DET_METRICS,
+  drawRadar("radar-det", "Detector profile", RADAR_DET_METRICS,
             (name, key)=>{
               const inst = INSTR.find(i => i.name===name);
               if (!inst) return NaN;
@@ -552,8 +581,7 @@ function drawDetRadar(){
               if (typeof dtype !== "string") return NaN;
               const det = DETECTORS.find(d => d.name === dtype.trim());
               return det ? det[key] : NaN;
-            },
-            sel);
+            }, sel);
 }
 
 /* ============================================================================
@@ -570,7 +598,7 @@ async function main(){
     st.textContent = "Failed to load instrument DB: "+e.message;
     return;
   }
-  document.getElementById("status").textContent = `Loaded ${INSTR.length} instruments.`;
+  document.getElementById("status").textContent = `${INSTR.length} instruments loaded.`;
 
   fillSelect("sc-x",     SCATTER_AXES, "PSF_RMS_det");
   fillSelect("sc-y",     SCATTER_AXES, "Spectral_resolution");
@@ -580,13 +608,14 @@ async function main(){
     document.getElementById(id).addEventListener("change", drawScatter);
   });
 
-  const defaultSel = ["FIREBall-2 2018","FIREBall-2 2025","UVEX FUV","UVEX NUV","SCWI SPEC"]
-    .filter(n => INSTR.some(i => i.name===n));
-  fillInstrumentMulti(defaultSel.length ? defaultSel : INSTR.slice(0,4).map(i=>i.name));
+  // Pre-select the first 3 instruments in the sheet order
+  const defaultSel = INSTR.slice(0, 3).map(i => i.name);
+  fillInstrumentMulti(defaultSel);
   renderChips();
 
-  window.addEventListener("resize", redrawAll);
-  redrawAll();
+  // Draw AFTER the layout has settled (2 RAFs so flex/grid sizes the panels first)
+  window.addEventListener("resize", ()=> requestAnimationFrame(()=>requestAnimationFrame(redrawAll)));
+  requestAnimationFrame(()=>requestAnimationFrame(redrawAll));
 }
 main();
 </script>
