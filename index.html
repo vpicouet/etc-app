@@ -168,6 +168,8 @@
   .slider-row.dep-locked{opacity:0.45}
   .slider-row.dep-locked input[type="range"]{pointer-events:none}
   .slider-row.dep-locked label{cursor:default;text-decoration:none}
+  /* Hide the "Image options" accordion when the user is on the SNR view (it's irrelevant there) */
+  body[data-view="snr"] #img-opts-acc{display:none}
   /* Labels are only clickable as x-axis in SNR view */
   body[data-view="img"] .slider-row label,
   body[data-view="ifs"] .slider-row label{cursor:default}
@@ -291,15 +293,21 @@
       <svg id="plot" class="active" preserveAspectRatio="none"></svg>
       <div id="plot-img" class="img-view">
         <div class="img-row">
-          <div class="img-cell">
+          <div class="img-cell img-cell-with-cb">
             <div class="cell-title" id="img-single-title">Single exposure</div>
             <canvas id="cv-single" title="DS9 colormap: right-click + drag (or ctrl-click + drag on Mac trackpad). Horizontal = bias, vertical = contrast. Double-click to reset."></canvas>
             <svg id="ov-single" class="overlay" preserveAspectRatio="none"></svg>
+            <canvas id="cb-single" class="ifs-colorbar"></canvas>
+            <div class="cb-label cb-top" id="cb-single-max"></div>
+            <div class="cb-label cb-bottom" id="cb-single-min"></div>
           </div>
-          <div class="img-cell">
+          <div class="img-cell img-cell-with-cb">
             <div class="cell-title" id="img-stack-title">Stacked</div>
             <canvas id="cv-stack" title="DS9 colormap: right-click + drag (or ctrl-click + drag on Mac trackpad). Horizontal = bias, vertical = contrast. Double-click to reset."></canvas>
             <svg id="ov-stack" class="overlay" preserveAspectRatio="none"></svg>
+            <canvas id="cb-stack" class="ifs-colorbar"></canvas>
+            <div class="cb-label cb-top" id="cb-stack-max"></div>
+            <div class="cb-label cb-bottom" id="cb-stack-min"></div>
           </div>
         </div>
         <div class="img-extra">
@@ -404,6 +412,60 @@ function cssVar(name, fallback){
   const v = getComputedStyle(document.body).getPropertyValue(name).trim();
   return v || fallback;
 }
+
+/* Sub-plot X-axis zoom helpers. STATE.subplotZoom[svgId] = {xLo, xHi} when zoomed. */
+function getZoomDomain(svgId, naturalLo, naturalHi){
+  const z = STATE.subplotZoom[svgId];
+  if (!z) return [naturalLo, naturalHi];
+  // Clamp to the natural range so the user can't pan off the data
+  const lo = Math.max(naturalLo, Math.min(naturalHi, z.xLo));
+  const hi = Math.max(naturalLo, Math.min(naturalHi, z.xHi));
+  return (hi > lo) ? [lo, hi] : [naturalLo, naturalHi];
+}
+function setSubplotZoom(svgId, xLo, xHi){ STATE.subplotZoom[svgId] = {xLo, xHi}; }
+function resetSubplotZoom(svgId){ delete STATE.subplotZoom[svgId]; }
+
+/* Wire wheel-zoom + dblclick-reset on an SVG subplot. Idempotent per id (only once). */
+function attachSubplotZoom(svgId, redrawFn){
+  if (STATE._subplotZoomAttached && STATE._subplotZoomAttached[svgId]) return;
+  STATE._subplotZoomAttached = STATE._subplotZoomAttached || {};
+  STATE._subplotZoomAttached[svgId] = true;
+  const svg = document.getElementById(svgId); if (!svg) return;
+  svg.addEventListener("wheel", function(e){
+    if (!STATE._lastDomain || !STATE._lastDomain[svgId]) return;
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const vbW  = svg.viewBox.baseVal.width || rect.width;
+    const m = STATE._lastDomain[svgId].margin;
+    // Cursor x in viewBox coords
+    const vx = (e.clientX - rect.left) * (vbW / rect.width);
+    // Map to data x
+    const [lo, hi] = STATE._lastDomain[svgId].used;
+    const fx = Math.max(0, Math.min(1, (vx - m.l) / (vbW - m.l - m.r)));
+    const xCursor = lo + fx*(hi - lo);
+    // Zoom factor (deltaY > 0 = zoom out)
+    const k = (e.deltaY < 0) ? 1/1.2 : 1.2;
+    const newLo = xCursor + (lo - xCursor)*k;
+    const newHi = xCursor + (hi - xCursor)*k;
+    const [nLo, nHi] = STATE._lastDomain[svgId].natural;
+    // Clamp to the natural range (no panning past data edges)
+    let cLo = Math.max(nLo, newLo);
+    let cHi = Math.min(nHi, newHi);
+    if (cHi - cLo < 1e-6 * (nHi - nLo)) return;   // refuse to over-zoom
+    if (cLo <= nLo + 1e-9 && cHi >= nHi - 1e-9){
+      resetSubplotZoom(svgId);
+    } else {
+      setSubplotZoom(svgId, cLo, cHi);
+    }
+    redrawFn();
+  }, {passive:false});
+  svg.addEventListener("dblclick", function(){
+    if (!STATE.subplotZoom[svgId]) return;
+    resetSubplotZoom(svgId);
+    redrawFn();
+  });
+}
+STATE._lastDomain = {};
 
 /* ============================================================================
    PRNG + sample distributions for the image simulator
@@ -880,7 +942,21 @@ function simulateImage(p){
 /* ============================================================================
    2. PHYSICS (port of Observation.initilize)
    ========================================================================== */
+/* ============================================================================
+   SNR CALCULATION
+   ----------------------------------------------------------------------------
+   The whole SNR pipeline lives in this single function. It is split into 8 named
+   stages below — search for the "### N — TITLE ###" banners to navigate. The
+   maths is documented in info.html §5 "SNR calculation".
+
+   Inputs: a `p` object with all instrument/observation scalars, plus
+           `p.xArr` the array of values for the x-axis sweep (so every quantity
+           below is an array of length N = p.xArr.length).
+   Output: { x, noises, noises_per_exp, electrons_per_pix, SNR, SB_lim_per_*, ... }
+   ============================================================================ */
 function computeObservation(p){
+
+  // ## 1 — INPUT PARAMETERS (vectorised over the x-axis sweep) ##############
   const N = p.xArr.length;
   const arrify = v => (typeof v==="number")? Array(N).fill(v) : v.slice();
   let Signal=arrify(p.Signal), Sky=arrify(p.Sky), Dark_current=arrify(p.Dark_current),
@@ -901,9 +977,13 @@ function computeObservation(p){
   const SNR_res = p.SNR_res || "per pix";
   const fsr = 2.35, arcsec2str = Math.pow(Math.PI/180/3600, 2);
 
+  // ## 2 — SOURCE FLUX → CONTINUUM UNITS + APERTURE FRACTION ###############
+  // Magnitudes (Signal > 1) are interpreted as UV mAB and converted to ergs.
+  // Circular fibers get a π/4 disc-vs-square geometric correction.
   Signal = Signal.map(s => s>1 ? Math.pow(10, -(s-20.08)/2.5)*2.06e-16 : s);
   for(let i=0;i<N;i++){ if (Math.abs(Slitlength[i]-Slitwidth[i])<1e-12) Signal[i] *= Math.PI/4; }
 
+  // Slit aperture fraction — fraction of the source PSF that passes through the slit (info.html §5.3)
   let flux_fraction = new Array(N).fill(1);
   for(let i=0;i<N;i++){
     const f1 = (1+erf(Slitlength[i]/(2*Math.SQRT2*PSF_RMS_mask[i]))) - 1;
@@ -913,6 +993,7 @@ function computeObservation(p){
   }
   const ff_slit = flux_fraction;
 
+  // ## 3 — PSF & SOURCE/RESOLUTION-ELEMENT SIZES (in detector pixels) ######
   const PSF_lambda_pix = new Array(N);
   for(let i=0;i<N;i++) PSF_lambda_pix[i] = 10*wavelength[i]/Spectral_resolution[i]/dispersion[i];
 
@@ -932,6 +1013,7 @@ function computeObservation(p){
     }
   }
 
+  // ## 4 — INTEGRATION MODE → N_pix (info.html §5.2) ########################
   let number_pixels_used = new Array(N);
   if (SNR_res==="per pix") number_pixels_used.fill(1);
   else if (SNR_res==="per Res elem") for(let i=0;i<N;i++) number_pixels_used[i] = Math.ceil(elem_size[i]);
@@ -950,6 +1032,8 @@ function computeObservation(p){
     } else for(let i=0;i<N;i++) number_pixels_used[i] = Math.ceil(pixels_total_source[i]);
   }
 
+  // ## 5 — EXCESS NOISE FACTOR + DARK/CIC SHOT NOISE #######################
+  // ENF = 1 in photon-counting mode or no EM gain, √2 otherwise.
   const ENF = new Array(N);
   for(let i=0;i<N;i++) ENF[i] = (counting_mode || EM_gain[i]<2) ? 1 : 2;
 
@@ -960,6 +1044,7 @@ function computeObservation(p){
     CIC_noise[i] = Math.sqrt(CIC_charge[i]*ENF[i]);
   }
 
+  // ## 6 — EFFECTIVE AREA = QE × Throughput × Atm × A_tel #################
   const Photon_fraction_kept = new Array(N).fill(1), RN_fraction_kept = new Array(N).fill(1);
   const QE_eff = new Array(N), effective_area = new Array(N);
   for(let i=0;i<N;i++){
@@ -1012,6 +1097,7 @@ function computeObservation(p){
     N_images_true[i] = N_images[i]*(1-cosmic_ray_loss[i]);
   }
 
+  // ## 7 — SIGNAL & SKY IN ELECTRONS, RN, ADDITIONAL BACKGROUND ############
   const sky = new Array(N), Sky_noise = new Array(N), Signal_LU = new Array(N), Signal_el = new Array(N), signal_noise = new Array(N);
   for(let i=0;i<N;i++){
     const Sky_CU_i = convert_ergs2LU(Sky[i], wavelength[i]);
@@ -1022,6 +1108,7 @@ function computeObservation(p){
     signal_noise[i] = Math.sqrt(Signal_el[i]*ENF[i]);
   }
 
+  // Read noise after EM-gain division + photon-counting analytic miscount model (info.html §5.5)
   const RN_after_gain = new Array(N);
   for(let i=0;i<N;i++) RN_after_gain[i] = RN[i]*RN_fraction_kept[i]/EM_gain[i];
   const RN_final = calculate_photon_counting_RN_noise(RN_after_gain);
@@ -1032,6 +1119,8 @@ function computeObservation(p){
     Additional_background_noise[i] = Math.sqrt(Additional_background[i]*ENF[i]);
   }
 
+  // ## 8 — TOTAL SNR (info.html §5.4) ######################################
+  // κ = √(N_pix × N_λ × N_stack)  ;  signal scales as κ²  ;  noise as κ·√(Σσ²)
   const N_resol_element_A = spectro ? Array(N).fill(1) : lambda_stack;
   const factor = new Array(N), Signal_resolution = new Array(N), Total_noise_final = new Array(N), SNR = new Array(N);
   for(let i=0;i<N;i++){
@@ -1058,6 +1147,7 @@ function computeObservation(p){
     electrons_per_pix[i] = [Signal_el[i], Dark_current_f[i], sky[i], 0*RN_final[i], CIC_charge[i], Additional_background[i]];
   }
 
+  // ## 9 — SURFACE BRIGHTNESS LIMIT @ SNR=5 (info.html §5.6) ##############
   const n_sigma = 5;
   const SB_lim_per_pix = new Array(N), SB_lim_per_res = new Array(N), SB_lim_per_source = new Array(N);
   for(let i=0;i<N;i++){
@@ -1162,7 +1252,9 @@ const STATE = {
     stack:      { bias: 0, contrast: 1 },
     ifs_single: { bias: 0, contrast: 1 },
     ifs_stack:  { bias: 0, contrast: 1 }
-  }
+  },
+  // Per-subplot x-axis zoom (scroll-wheel sets it, dblclick clears it). Keyed by SVG id.
+  subplotZoom: {}
 };
 
 function defaultValueFor(p){ return p.log ? Math.pow(10, p.default_log) : p.default; }
@@ -1451,7 +1543,8 @@ function drawPlot(res){
     ? d3.scaleLog().domain([Math.max(xmin,1e-30), xmax]).range([0,1])
     : d3.scaleLinear().domain([xmin,xmax]).range([0,1]);
 
-  const panels = makePanels(dim.w, dim.h, 4);
+  // 3 panels now (the old "SB limit" panel was folded into panel 2's legend).
+  const panels = makePanels(dim.w, dim.h, 3);
 
   // Panel 0: noise lines
   const noiseSeries = [];
@@ -1499,28 +1592,21 @@ function drawPlot(res){
   // ===== Panel 2 =====
   const p2 = panels[2];
   const max2 = d3.max(snrStack[snrStack.length-1].y1);
-  const snrTitle = `SNR = ${res.SNR[iCur].toFixed(2)}   (max ${d3.max(res.SNR).toFixed(2)})`;
+  // Pick the SB-limit array matching the active SNR mode
+  const snrMode = document.getElementById("snr_res").value;
+  const sbArr   = (snrMode === "per pix")       ? sb_pix
+               : (snrMode === "per Source" || snrMode === "per Source per 2λpix") ? sb_src
+               : sb_res;
+  const sbLabel = (snrMode === "per pix") ? "per pix"
+                : (snrMode === "per Source" || snrMode === "per Source per 2λpix") ? "per source"
+                : "per res elem";
+  const sbVal   = sbArr[iCur];
+  const snrTitle = `SNR ${res.SNR[iCur].toFixed(2)} (max ${d3.max(res.SNR).toFixed(2)}) · SB(5σ,${sbLabel}) ${isFinite(sbVal)?sbVal.toFixed(2):"—"} log[erg/cm²/s/asec²]`;
   drawStackPanel(svg, p2, x, xScale, snrStack, max2, ylog, "SNR contributions", iCur,
     NAMES.map((n,j)=>({name:n, color:COLORS[j]})), (j)=>{
       const Tn = res.Total_noise_final[iCur];
       return Tn>0 ? res.SNR[iCur]*res.noises[iCur][j]**2/(Tn*Tn) : 0;
     }, snrTitle);
-
-  // ===== Panel 3 =====
-  const p3 = panels[3];
-  const allY3 = sb_pix.concat(sb_res).concat(sb_src).filter(v=>isFinite(v));
-  drawPanel(svg, p3, x, xScale, allY3, false, "log₁₀ ergs/cm²/s/asec²", g=>{
-    const cc = cssVar("--plot-curve","#000");
-    [["per pix",sb_pix,cc,1],["per Res",sb_res,cc,0.5],["per Source",sb_src,cc,0.3]].forEach(([n,arr,c,a])=>{
-      g.append("path").datum(arr).attr("fill","none").attr("stroke",c).attr("stroke-opacity",a).attr("stroke-width",4.0)
-        .attr("d", lineGen(x, p3, xScale, allY3, false));
-    });
-    legendBlock(g, p3, [
-      {name:`SB SNR=5 / pix: ${fmtNum(sb_pix[iCur])}`, color:"#000"},
-      {name:`SB SNR=5 / res: ${fmtNum(sb_res[iCur])}`, color:"#000", alpha:0.5},
-      {name:`SB SNR=5 / src: ${fmtNum(sb_src[iCur])}`, color:"#000", alpha:0.3}
-    ]);
-  });
 
   // x-axis label — bottom-right of the last panel, just above the x-axis line
   const lastP = panels[panels.length-1];
@@ -1568,14 +1654,6 @@ function drawPlot(res){
           return (Tn>0) ? res.SNR[i]*res.noises[i][j]**2/(Tn*Tn) : 0;
         })
       })).concat([{ name:"SNR total", color:"#000", ys: res.SNR.slice() }])
-    },
-    {
-      title: "log₁₀ SB (ergs/cm²/s/asec²)",
-      series: [
-        {name:"per pix",    color:"#000", ys: sb_pix},
-        {name:"per Res",    color:"#000", ys: sb_res},
-        {name:"per Source", color:"#000", ys: sb_src}
-      ]
     }
   ];
 
@@ -1959,9 +2037,15 @@ function applyColorScale(which){
   const vmin = center - spread;
   const vmax = center + spread;
   rasterizeImage(cv, data, c.W, c.H, vmin, vmax, c.ylog);
-  // Render the IFS colorbar with the same vmin/vmax and the current colormap
-  if (isIfs){
-    const cbId = which === "ifs_single" ? "cb-ifs-single" : "cb-ifs-stack";
+  // Render the colorbar for both Spectro image and IFS canvases.
+  const cbIdMap = {
+    single:     "cb-single",
+    stack:      "cb-stack",
+    ifs_single: "cb-ifs-single",
+    ifs_stack:  "cb-ifs-stack"
+  };
+  const cbId = cbIdMap[which];
+  if (cbId){
     const cb = document.getElementById(cbId);
     if (cb){
       renderColorbar(cb, vmin, vmax, c.ylog);
@@ -1973,12 +2057,12 @@ function applyColorScale(which){
   }
 }
 
+/* Compact tick label format for colorbar min/max */
+const _cbFmt = d3.format(".3~g");
 function formatCbVal(v){
   if (!isFinite(v)) return "—";
-  const a = Math.abs(v);
-  if (a===0) return "0";
-  if (a<1e-2 || a>=1e4) return v.toExponential(1);
-  return v.toFixed(2);
+  if (v===0) return "0";
+  return _cbFmt(v);
 }
 
 /* Render a vertical colorbar (low at the bottom, high at the top) using the
@@ -2230,7 +2314,7 @@ function svgCellSize(svgNode){
 
 /* Draw a single-line+stack curve on its own SVG, with x-axis using `xValues`.
    viewBox is set to the SVG's actual rendered pixel size to avoid scaling glitches. */
-function drawCurveSvg(svgId, single, stack, xValues, title, xLabel){
+function drawCurveSvg(svgId, single, stack, xValues, title, xLabel, redrawFn){
   const svg = d3.select("#"+svgId);
   svg.selectAll("*").remove();
   const sz = svgCellSize(svg.node());
@@ -2238,21 +2322,41 @@ function drawCurveSvg(svgId, single, stack, xValues, title, xLabel){
   svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:38,r:8,t:16,b:22};
 
-  const all = Array.from(single).concat(Array.from(stack)).filter(v=>isFinite(v));
-  const yMin = Math.min(...all), yMax = Math.max(...all);
-  const xs = d3.scaleLinear().domain([xValues[0], xValues[xValues.length-1]]).range([m.l, W-m.r]);
+  // Natural domain = full xValues range; zoomed domain overrides if user scrolled
+  const xNatLo = xValues[0], xNatHi = xValues[xValues.length-1];
+  const [xLo, xHi] = getZoomDomain(svgId, xNatLo, xNatHi);
+  // Index range covered by [xLo, xHi]
+  let iLo = 0, iHi = xValues.length-1;
+  for (let i=0;i<xValues.length;i++){ if (xValues[i] >= xLo){ iLo = Math.max(0, i-1); break; } }
+  for (let i=xValues.length-1;i>=0;i--){ if (xValues[i] <= xHi){ iHi = Math.min(xValues.length-1, i+1); break; } }
+  // Y range computed only over the visible window for autoscale
+  let yMin = Infinity, yMax = -Infinity;
+  for (let i=iLo;i<=iHi;i++){
+    if (isFinite(single[i])){ if (single[i]<yMin) yMin=single[i]; if (single[i]>yMax) yMax=single[i]; }
+    if (isFinite(stack[i])){  if (stack[i]<yMin)  yMin=stack[i];  if (stack[i]>yMax)  yMax=stack[i]; }
+  }
+  if (!isFinite(yMin)){ yMin = 0; yMax = 1; }
+  const xs = d3.scaleLinear().domain([xLo, xHi]).range([m.l, W-m.r]);
   const ys = d3.scaleLinear().domain([yMin, yMax]).range([H-m.b, m.t]);
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(4).tickFormat(d3.format(".3~g")));
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3).tickFormat(d3.format(".2~g")));
-  const line = d3.line().x((_,i)=>xs(xValues[i])).y(v=>ys(v));
-  // Noisy single = wider with alpha so the clean stacked curve underneath stays visible
+  const line = d3.line()
+    .defined((_,i)=> xValues[i] >= xLo && xValues[i] <= xHi)
+    .x((_,i)=>xs(xValues[i])).y(v=>ys(v));
   svg.append("path").datum(Array.from(single)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",3.0).attr("d", line);
   svg.append("path").datum(Array.from(stack)).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",3.2).attr("d", line);
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title").text(title);
-  // x-label moved to top-right (just above the panel) so it doesn't collide with tick labels
   // x-label sits just ABOVE the axis on the right (between curves and the axis line)
   svg.append("text").attr("x", W-m.r-4).attr("y", H-m.b-4).attr("text-anchor","end")
     .style("font-size","10px").style("fill","var(--plot-axis-text,#444)").style("font-style","italic").text(xLabel);
+  // Tiny zoom badge when active
+  if (STATE.subplotZoom[svgId]){
+    svg.append("text").attr("x", m.l+4).attr("y", m.t+10).attr("class","legend")
+      .style("fill","var(--accent-2,#E24A33)").text("⊕ zoom (dbl-click to reset)");
+  }
+  // Remember for the wheel handler + attach once
+  STATE._lastDomain[svgId] = { used:[xLo, xHi], natural:[xNatLo, xNatHi], margin: m };
+  if (redrawFn) attachSubplotZoom(svgId, redrawFn);
 }
 
 function drawProfiles(sim){
@@ -2260,8 +2364,9 @@ function drawProfiles(sim){
   // x-axis values: spectral in Å (sim.wavelengths), spatial in arcsec offset from slit centre
   const yValsArcsec = new Float64Array(sim.H);
   for (let j=0;j<sim.H;j++) yValsArcsec[j] = (j - sim.H/2) * sim.yPhys_per_pix;
-  drawCurveSvg("svg-prof-spec", prof.specS, prof.specK, sim.wavelengths, "Spectral profile (single grey, stack black)", "λ [Å]");
-  drawCurveSvg("svg-prof-spat", prof.spatS, prof.spatK, yValsArcsec,    "Spatial profile",  "spatial offset [″]");
+  const redraw = ()=> drawProfiles(sim);
+  drawCurveSvg("svg-prof-spec", prof.specS, prof.specK, sim.wavelengths, "Spectral profile (single grey, stack black)", "λ [Å]", redraw);
+  drawCurveSvg("svg-prof-spat", prof.spatS, prof.spatK, yValsArcsec,    "Spatial profile",  "spatial offset [″]", redraw);
 }
 
 function drawOptics(sim, pa){
@@ -2272,8 +2377,17 @@ function drawOptics(sim, pa){
   svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:38, r:8, t:14, b:22};
 
-  const xs = d3.scaleLinear().domain([sim.wavelengths[0], sim.wavelengths[sim.W-1]]).range([m.l, W-m.r]);
+  const xNatLo = sim.wavelengths[0], xNatHi = sim.wavelengths[sim.W-1];
+  const [xLo, xHi] = getZoomDomain("svg-optics", xNatLo, xNatHi);
+  const xs = d3.scaleLinear().domain([xLo, xHi]).range([m.l, W-m.r]);
   const ys = d3.scaleLinear().domain([0, 1.05]).range([H-m.b, m.t]);
+  // Stash + attach zoom handler (idempotent)
+  STATE._lastDomain["svg-optics"] = { used:[xLo, xHi], natural:[xNatLo, xNatHi], margin: m };
+  attachSubplotZoom("svg-optics", ()=> drawOptics(sim, pa));
+  if (STATE.subplotZoom["svg-optics"]){
+    svg.append("text").attr("x", m.l+4).attr("y", m.t+10).attr("class","legend")
+      .style("fill","var(--accent-2,#E24A33)").text("⊕ zoom (dbl-click to reset)");
+  }
 
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(4).tickFormat(d3.format(".0f")));
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(4));
@@ -2348,14 +2462,21 @@ function drawHistogram(sim){
     }
     return h;
   }
-  const vmin = Math.min(percentile(sim.single, 0.01), percentile(sim.stack, 0.01));
-  const vmax = Math.max(percentile(sim.single, 0.99), percentile(sim.stack, 0.99));
+  const vminN = Math.min(percentile(sim.single, 0.01), percentile(sim.stack, 0.01));
+  const vmaxN = Math.max(percentile(sim.single, 0.99), percentile(sim.stack, 0.99));
+  const [vmin, vmax] = getZoomDomain("svg-hist", vminN, vmaxN);
   const hS = buildHist(sim.single, vmin, vmax);
   const hK = buildHist(sim.stack,  vmin, vmax);
   const yMax = Math.max(d3.max(hS), d3.max(hK)) || 1;
 
   const ylog = document.getElementById("ylog").checked;
   const xs = d3.scaleLinear().domain([vmin, vmax]).range([m.l, W-m.r]);
+  STATE._lastDomain["svg-hist"] = { used:[vmin, vmax], natural:[vminN, vmaxN], margin: m };
+  attachSubplotZoom("svg-hist", ()=> drawHistogram(sim));
+  if (STATE.subplotZoom["svg-hist"]){
+    svg.append("text").attr("x", m.l+4).attr("y", m.t+10).attr("class","legend")
+      .style("fill","var(--accent-2,#E24A33)").text("⊕ zoom (dbl-click to reset)");
+  }
   // Log y when ylog is on (bin counts >=0, so clamp lower bound to 1).
   let ys, yBaselinePx;
   if (ylog && yMax > 1){
@@ -2646,15 +2767,31 @@ function drawIfsSpectrum(){
   const specStack  = ifsIntegratedSpectrum(IFS_STATE.cube_stack, IFS_STATE.H, IFS_STATE.W, IFS_STATE.n3, r.x1, r.x2, r.y1, r.y2);
 
   const xValues = IFS_STATE.wavelengths;
-  const all = Array.from(specSingle).concat(Array.from(specStack)).filter(v=>isFinite(v));
-  const yMin = Math.min(...all), yMax = Math.max(...all);
-  const xs = d3.scaleLinear().domain([xValues[0], xValues[xValues.length-1]]).range([m.l, W-m.r]);
+  const xNatLo = xValues[0], xNatHi = xValues[xValues.length-1];
+  const [xLo, xHi] = getZoomDomain("svg-ifs-spec", xNatLo, xNatHi);
+  // Y autoscale over visible window only
+  let yMin = Infinity, yMax = -Infinity;
+  for (let i=0;i<xValues.length;i++){
+    if (xValues[i] < xLo || xValues[i] > xHi) continue;
+    if (isFinite(specSingle[i])){ if (specSingle[i]<yMin) yMin=specSingle[i]; if (specSingle[i]>yMax) yMax=specSingle[i]; }
+    if (isFinite(specStack[i])){  if (specStack[i]<yMin)  yMin=specStack[i];  if (specStack[i]>yMax)  yMax=specStack[i]; }
+  }
+  if (!isFinite(yMin)){ yMin = 0; yMax = 1; }
+  const xs = d3.scaleLinear().domain([xLo, xHi]).range([m.l, W-m.r]);
   const ys = d3.scaleLinear().domain([yMin, yMax]).range([H-m.b, m.t]);
+  STATE._lastDomain["svg-ifs-spec"] = { used:[xLo, xHi], natural:[xNatLo, xNatHi], margin: m };
+  attachSubplotZoom("svg-ifs-spec", ()=> drawIfsSpectrum());
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(4).tickFormat(d3.format(".3~g")));
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3).tickFormat(d3.format(".2~g")));
-  const line = d3.line().x((_,i)=>xs(xValues[i])).y(v=>ys(v));
+  const line = d3.line()
+    .defined((_,i)=> xValues[i] >= xLo && xValues[i] <= xHi)
+    .x((_,i)=>xs(xValues[i])).y(v=>ys(v));
   svg.append("path").datum(Array.from(specSingle)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",3.0).attr("d", line);
   svg.append("path").datum(Array.from(specStack)).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",3.2).attr("d", line);
+  if (STATE.subplotZoom["svg-ifs-spec"]){
+    svg.append("text").attr("x", m.l+50).attr("y", m.t+10).attr("class","legend")
+      .style("fill","var(--accent-2,#E24A33)").text("⊕ zoom (dbl-click to reset)");
+  }
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title")
     .text(`Integrated spectrum over [${r.x1.toFixed(0)}..${r.x2.toFixed(0)}] × [${r.y1.toFixed(0)}..${r.y2.toFixed(0)}] — drag the red line to slice at another λ.`);
   // x-label top-right above the panel (avoids overlap with bottom ticks)
