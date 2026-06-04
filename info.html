@@ -186,6 +186,7 @@ window.MathJax = {
       </ol>
     </li>
     <li><a href="#limits">Limitations</a></li>
+    <li><a href="#data">Data provenance</a></li>
     <li><a href="#resources">Resources</a></li>
   </ol>
 </aside>
@@ -763,7 +764,92 @@ time-critical observations, or instruments with significant field-dependent
 effects, use an instrument-specific ETC.</p>
 
 <!-- ============================================================ -->
-<h2 id="resources">9 · Resources</h2>
+<h2 id="data">9 · Data provenance</h2>
+
+<p>
+All bundled curves originate from the
+<a href="https://github.com/vpicouet/generic-etc/tree/main/data">vpicouet/generic-etc/data/</a>
+folder of the Python notebook. They are copied verbatim into the
+<a href="https://github.com/vpicouet/etc-app/tree/main/data/sources">data/sources/</a>
+subtree of this repository, then resampled onto a common wavelength grid by
+<a href="https://github.com/vpicouet/etc-app/blob/main/scripts/bake_spectra.py"><code>scripts/bake_spectra.py</code></a>
+and concatenated into <code>data/spectra.json</code> (≈ 2.7 MB), also served as a JS
+wrapper <code>data/spectra.js</code> so the file:// case works without a fetch.
+</p>
+
+<h3 id="data-atm">9.1 Atmosphere transmission</h3>
+<table>
+<thead><tr><th>Key in <code>spectra.json</code></th><th>Source file</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>pwv_kpno (ground)</code></td>
+    <td><code>Atm_transmission/pwv_atm_combined_ground.csv</code></td>
+    <td>Built from <a href="https://mwvgroup.github.io/pwv_kpno/">pwv_kpno</a> for KPNO conditions; ground-only — zero in the deep UV.</td></tr>
+<tr><td><code>pwv_atm (KPNO)</code></td>
+    <td><code>Atm_transmission/pwv_atm.csv</code></td>
+    <td>Single-PWV pwv_kpno run.</td></tr>
+<tr><td><code>transmission_ground</code></td>
+    <td><code>Atm_transmission/transmission_ground.csv</code></td>
+    <td>Compact summary curve.</td></tr>
+<tr><td><code>atm_secz1.5_1.6mm</code></td>
+    <td><code>Atm_transmission/atm_transmission_secz1.5_1.6mm.txt</code></td>
+    <td>Mauna Kea sec(z)=1.5, PWV=1.6mm.</td></tr>
+</tbody>
+</table>
+
+<h3 id="data-sky">9.2 Sky emission lines</h3>
+<table>
+<thead><tr><th>Key</th><th>Source</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>spectra_0.2A</code></td>
+    <td><a href="https://www.eso.org/observing/dfo/quality/UVES/pipeline/sky_spectrum.html">UVES sky-line atlas</a></td>
+    <td>Visible + NIR; downsampled from 0.2 Å native.</td></tr>
+<tr><td><code>UV_atm_lines</code></td>
+    <td>Custom UV line list bundled in generic-etc</td>
+    <td>For UV instruments where UVES doesn't apply.</td></tr>
+</tbody>
+</table>
+
+<h3 id="data-spectra">9.3 Source SEDs (~99 templates)</h3>
+<ul>
+  <li><strong>15 HST/FOS QSOs</strong> — <code>data/Spectra/h_*fos_spc.fits</code> from
+      the HST/FOS data archive (Mrk 509, 1700+518, etc.).</li>
+  <li><strong>29 Salvato QSO templates</strong> — <code>data/Spectra/QSO_SALVATO2015/*.txt</code>;
+      <a href="https://ui.adsabs.harvard.edu/abs/2009ApJ...690.1250S">Salvato et al. (2009)</a>.</li>
+  <li><strong>55 COSMOS galaxy SEDs</strong> — <code>data/Spectra/GAL_COSMOS_SED/*.txt</code>;
+      Polletta SEDs as packaged in the COSMOS photo-z work.</li>
+</ul>
+
+<h3 id="data-instruments">9.4 Instrument-specific curves</h3>
+<p>
+Each entry under
+<a href="https://github.com/vpicouet/etc-app/tree/main/data/sources/Instruments"><code>data/sources/Instruments/&lt;NAME&gt;/</code></a>
+may contribute up to three CSVs, baked into
+<code>spectra.json</code> as
+<code>atm_per_instrument[NAME]</code>,
+<code>throughput_per_instrument[NAME]</code>,
+<code>sky_lines_per_instrument[NAME]</code>:
+</p>
+<ul>
+  <li><strong>Atmosphere</strong> — instrument-specific transmission window (e.g. FIREBall-2 at 35 km
+      altitude has its own UV transmission; SCWI uses a stratospheric model).</li>
+  <li><strong>Throughput</strong> — total optics × QE × filter as a function of λ. Used directly
+      as the spectral shape of the source profile, overriding the Gaussian
+      Throughput_FWHM model.</li>
+  <li><strong>Sky emission lines</strong> — instrument-specific (e.g. UV lines for UV instruments).</li>
+</ul>
+<p>
+The lookup is automatic: the active instrument's <em>folder name</em> (with spaces
+replaced by underscores — e.g. <code>SCWI SPEC</code> → <code>SCWI_SPEC</code>) is
+matched against the baked dict, and instrument-specific curves take precedence
+over the generic ones. The Optics panel under <em>Spectro image</em> reports which
+curve is actually being used in its title.
+</p>
+<p>Currently bundled: <strong>FIREBall-2_2018, FIREBall-2_2025, SCWI, SCWI_SPEC, SCWI_PERF, SCWI_MIN_REQ, SCWI_Matt</strong>
+(atm + throughput + sky); <strong>GALEX_FUV, GALEX_NUV, UVEX_FUV, UVEX_NUV</strong>
+(throughput only).</p>
+
+<!-- ============================================================ -->
+<h2 id="resources">10 · Resources</h2>
 
 <ul>
   <li><a href="https://github.com/vpicouet/etc-app">vpicouet/etc-app</a> — this app's source.</li>

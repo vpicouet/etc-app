@@ -508,6 +508,9 @@ function simulateImage(p){
   const norm = makeNormal(rng);
   const pois = makePoisson(rng);
   const gam = makeGamma(rng, norm);
+  // Reported back so the Optics panel legend can show which curve was actually used
+  let sourceInfo_throughput = "flat";
+  let sourceInfo_atm        = "flat";
 
   // Pull params
   const wavelength = p.wavelength;                  // nm
@@ -589,50 +592,81 @@ function simulateImage(p){
   const wavelengths = new Float64Array(W);
   for (let i=0;i<W;i++) wavelengths[i] = wave_min + (wave_max-wave_min)*i/(W-1);
 
-  // Throughput(λ): try baked instrument throughput; else Gaussian; else flat.
+  // Mapping helper — the sheet writes "SCWI SPEC" with spaces, the baked-folder key is "SCWI_SPEC".
+  const instKey = (STATE.current_instrument || "").replace(/ /g,"_");
+
+  // Throughput(λ):
+  //   1. If a baked instrument-specific throughput curve exists → use it.
+  //   2. Else if QElambda is on → centred Gaussian of FWHM = Throughput_FWHM.
+  //   3. Else flat 1.
   const thSigma = Throughput_FWHM / 2.35;
   const throughputCurve = new Float64Array(W);
+  let throughputSource = "flat";
   if (opt_QElambda){
-    for (let i=0;i<W;i++) throughputCurve[i] = gauss1d(wavelengths[i], wavelength*10, thSigma);
-  } else {
-    throughputCurve.fill(1);
-  }
-
-  // Atmosphere curve — use baked transmission if available; otherwise mild raised-cosine placeholder.
-  const atmCurve = new Float64Array(W);
-  if (opt_atmlambda){
     let used = false;
-    if (SPECTRA_DATA && SPECTRA_DATA.atm && p.atm_kind && SPECTRA_DATA.atm[p.atm_kind]){
-      const c = interpCurve(SPECTRA_DATA.atm[p.atm_kind], SPECTRA_DATA.grid, wavelengths);
+    if (SPECTRA_DATA && SPECTRA_DATA.throughput_per_instrument && SPECTRA_DATA.throughput_per_instrument[instKey]){
+      const c = interpCurve(SPECTRA_DATA.throughput_per_instrument[instKey], SPECTRA_DATA.grid, wavelengths);
       if (c){
-        // Sanity check: if the baked atmosphere is effectively zero across the detector window
-        // (e.g. ground-based pwv_kpno sampled in the deep UV), fall back to a flat curve so the
-        // source doesn't disappear. The user can always toggle the flag off in Image options.
-        let mx = 0;
-        for (let i=0;i<W;i++) if (c[i]>mx) mx = c[i];
+        let mx = 0; for (let i=0;i<W;i++) if (c[i]>mx) mx = c[i];
         if (mx > 0.01){
-          for (let i=0;i<W;i++) atmCurve[i] = c[i];
-          used = true;
-        } else {
-          // Atm curve is ~0 in this λ window — skip it and use the scalar Atmosphere instead (handled downstream).
-          atmCurve.fill(1);
-          used = true;
-          if (typeof window !== "undefined" && window._etc_warned_atm !== true){
-            console.warn(`[etc] atm curve "${p.atm_kind}" is ~0 across [${wavelengths[0].toFixed(0)}..${wavelengths[W-1].toFixed(0)}] Å — using flat atm=1 for the spectral shape. Toggle "Atmospheric absorption" off to remove this fallback.`);
-            window._etc_warned_atm = true;
-          }
+          // Normalise so the peak is 1 — relative shape only.
+          for (let i=0;i<W;i++) throughputCurve[i] = c[i]/mx;
+          used = true; throughputSource = `instrument (${instKey})`;
         }
       }
     }
     if (!used){
-      for (let i=0;i<W;i++){
-        const t = (wavelengths[i] - wavelengths[0]) / (wavelengths[W-1] - wavelengths[0] || 1);
-        atmCurve[i] = 1 - 0.15*(1 - Math.cos(2*Math.PI*t))/2;
+      for (let i=0;i<W;i++) throughputCurve[i] = gauss1d(wavelengths[i], wavelength*10, thSigma);
+      throughputSource = `Gaussian FWHM=${Throughput_FWHM.toFixed(0)}Å`;
+    }
+  } else {
+    throughputCurve.fill(1);
+  }
+
+  // Atmosphere curve:
+  //   1. If a baked instrument-specific atm curve exists → use it.
+  //   2. Else fall back to the user-selected global curve (p.atm_kind).
+  //   3. If the resulting curve is ~0 across the detector window, use flat 1 (avoids the source disappearing in UV).
+  const atmCurve = new Float64Array(W);
+  let atmSource = "flat";
+  if (opt_atmlambda){
+    let used = false;
+    // 1. instrument-specific
+    if (SPECTRA_DATA && SPECTRA_DATA.atm_per_instrument && SPECTRA_DATA.atm_per_instrument[instKey]){
+      const c = interpCurve(SPECTRA_DATA.atm_per_instrument[instKey], SPECTRA_DATA.grid, wavelengths);
+      if (c){
+        let mx = 0; for (let i=0;i<W;i++) if (c[i]>mx) mx = c[i];
+        if (mx > 0.01){
+          for (let i=0;i<W;i++) atmCurve[i] = c[i];
+          used = true; atmSource = `instrument (${instKey})`;
+        }
       }
+    }
+    // 2. global selected via dropdown
+    if (!used && SPECTRA_DATA && SPECTRA_DATA.atm && p.atm_kind && SPECTRA_DATA.atm[p.atm_kind]){
+      const c = interpCurve(SPECTRA_DATA.atm[p.atm_kind], SPECTRA_DATA.grid, wavelengths);
+      if (c){
+        let mx = 0; for (let i=0;i<W;i++) if (c[i]>mx) mx = c[i];
+        if (mx > 0.01){
+          for (let i=0;i<W;i++) atmCurve[i] = c[i];
+          used = true; atmSource = p.atm_kind;
+        } else if (typeof window !== "undefined" && window._etc_warned_atm !== true){
+          console.warn(`[etc] atm curve "${p.atm_kind}" is ~0 across [${wavelengths[0].toFixed(0)}..${wavelengths[W-1].toFixed(0)}] Å — using flat atm. Pick a different curve or toggle off.`);
+          window._etc_warned_atm = true;
+        }
+      }
+    }
+    // 3. fallback
+    if (!used){
+      atmCurve.fill(1);
+      atmSource = "flat (no curve fits window)";
     }
   } else {
     atmCurve.fill(1);
   }
+  // Expose for the Optics overlay legend
+  sourceInfo_throughput = throughputSource;
+  sourceInfo_atm        = atmSource;
 
   // Spectral profile of the source — either:
   //   - "Baseline emission line": Gaussian centred mid-W, sigma = PSF_lam (original behaviour), OR
@@ -836,6 +870,8 @@ function simulateImage(p){
     cosmic_ray_loss, EM_gain, spectro,
     // Optics curves for the right-hand panel
     throughputCurve, atmCurve, skyLineMult, slitProfile,
+    // Which curve was actually used (for the optics panel legend)
+    sourceInfo_throughput, sourceInfo_atm,
     // Diagnostics
     spectralProfile, spatialProfile
   };
@@ -2271,9 +2307,12 @@ function drawOptics(sim, pa){
     }
   }
 
-  // Title at top
+  // Title at top: which curves are actually used
+  const titleParts = [];
+  if (sim.sourceInfo_throughput) titleParts.push(`TH: ${sim.sourceInfo_throughput}`);
+  if (sim.sourceInfo_atm)        titleParts.push(`Atm: ${sim.sourceInfo_atm}`);
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title")
-    .text(`Throughput / Atm / Sky / Source`);
+    .text(titleParts.join(" — "));
   // x-label just above the x-axis on the right
   svg.append("text").attr("x", W-m.r-4).attr("y", H-m.b-4).attr("text-anchor","end")
     .style("font-size","10px").style("fill","var(--plot-axis-text,#444)").style("font-style","italic").text("λ [Å]");

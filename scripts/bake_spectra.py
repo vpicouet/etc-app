@@ -1,19 +1,37 @@
-"""bake_spectra.py — read CSV/TXT/FITS spectra/atm/sky from generic-etc/data and emit data/spectra.json.
+"""bake_spectra.py — resample source spectra, atmosphere & sky curves into a single JSON
+that the web app loads at startup.
 
-Produces a single JSON resampled on common wavelength grids:
-  spectra (continuum SEDs):  λ = 80..1100 nm, 4000 points, log-uniform-ish... actually plain linear.
-  atm transmission:          same grid as spectra
-  sky emission lines:        λ = 100..400 nm, 8000 points (finer because lines are narrow)
+Input  : data/sources/   (CSVs and TXTs originally from vpicouet/generic-etc/data/)
+Output : data/spectra.json   +   data/spectra.js   (= window.SPECTRA_DATA_BAKED = {…})
 
-The web app then linearly interpolates each curve onto the detector's spectral pixel grid.
+Structure of the JSON:
+  grid          : {min_nm, max_nm, n}                          — common SED + atm grid
+  sky_grid      : {min_nm, max_nm, n}                          — finer grid for sky lines
+  atm           : { name: [...] }                              — global atm transmission curves
+  sky_lines     : { name: [...] }                              — global sky-line catalogues
+  spectra       : { name: [...] }                              — source SEDs (continuum, peak=1)
+  atm_per_instrument        : { instrument: [...] }            — instrument-specific atm
+  throughput_per_instrument : { instrument: [...] }            — instrument-specific E2E throughput
+  sky_lines_per_instrument  : { instrument: [...] }            — instrument-specific sky lines
+
+The instrument name keys are the folder names under data/sources/Instruments/, e.g.
+"SCWI_SPEC", "FIREBall-2_2025". When the web app loads the instrument list from the
+Google sheet, it tries to match each instrument's name (with spaces replaced by underscores
+and dashes preserved) against this dict and prefers the instrument-specific curve over the
+generic one.
 """
 from __future__ import annotations
-import json, os, sys
+import json
+import csv as _csv
 from pathlib import Path
 import numpy as np
 
-DATA = Path("/Users/Vincent/Github/generic-etc/data")
-OUT  = Path("/Users/Vincent/Github/etc-app/data/spectra.json")
+# ---------------------------------------------------------------------------
+ROOT   = Path(__file__).resolve().parent.parent
+SRC    = ROOT / "data" / "sources"
+OUT    = ROOT / "data" / "spectra.json"
+OUTJS  = ROOT / "data" / "spectra.js"
+SPEC_SRC = Path("/Users/Vincent/Github/generic-etc/data/Spectra")   # local-only sources (FITS + Salvato + COSMOS)
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
 # ---------- common grids ----------
@@ -22,6 +40,11 @@ SKY_MIN_NM,  SKY_MAX_NM,  SKY_N  = 100.0, 400.0,  8000    # sky lines grid (fine
 
 grid    = np.linspace(GRID_MIN_NM, GRID_MAX_NM, GRID_N)
 skygrid = np.linspace(SKY_MIN_NM,  SKY_MAX_NM,  SKY_N)
+
+
+# ===========================================================================
+# helpers
+# ===========================================================================
 
 def resample(wave_nm, flux, target):
     """Linear interp, zeros outside the input range."""
@@ -32,185 +55,219 @@ def resample(wave_nm, flux, target):
         return np.zeros_like(target)
     order = np.argsort(wave_nm)
     wave_nm, flux = wave_nm[order], flux[order]
-    out = np.interp(target, wave_nm, flux, left=0.0, right=0.0)
-    return out
+    return np.interp(target, wave_nm, flux, left=0.0, right=0.0)
 
 def normalize(arr):
     m = float(np.nanmax(np.abs(arr)))
     return arr / m if m > 0 else arr
 
-def round_arr(arr, decimals=6):
+def round_arr(arr, decimals=5):
     """Return a Python list with rounded floats (smaller JSON)."""
     return [float(f"{v:.{decimals}g}") for v in arr]
 
-# ---------- 1. Atmosphere transmission ----------
-print("--- Atmosphere ---")
-atm_curves = {}
-try:
-    # 1a. pwv_atm_combined_ground.csv: wave_microns, transmission
-    p = DATA / "Atm_transmission/pwv_atm_combined_ground.csv"
-    import csv as _csv
-    with open(p) as f:
-        rdr = _csv.DictReader(f)
-        rows = list(rdr)
-    wave_nm = np.array([float(r["wave_microns"])*1000 for r in rows])
-    trans   = np.array([float(r["transmission"])      for r in rows])
-    out = resample(wave_nm, trans, grid)
-    atm_curves["pwv_kpno (ground)"] = round_arr(out, 5)
-    print(f"  pwv_kpno: native {wave_nm.size} → {grid.size}")
-except Exception as e:
-    print(f"  pwv_kpno: SKIP ({e})")
-
-# 1b. transmission_ground.csv (smaller alt)
-try:
-    p = DATA / "Atm_transmission/transmission_ground.csv"
-    with open(p) as f:
-        rdr = _csv.reader(f)
-        rows = list(rdr)
-    hdr = rows[0]
-    arr = np.array(rows[1:], dtype=float)
-    wave_col = 0 if "wave" in hdr[0].lower() or "lam" in hdr[0].lower() else 0
-    # Guess units: if < 50, microns; if < 10000, nm; else Å
-    wmean = float(np.nanmedian(arr[:, wave_col]))
-    if wmean < 50:
-        wave_nm = arr[:,wave_col] * 1000
-    elif wmean < 10000:
-        wave_nm = arr[:,wave_col]
+def auto_wave_nm(wave_col):
+    """Guess whether wave_col is in microns, nm or Å from its median value."""
+    wm = float(np.nanmedian(wave_col))
+    if wm < 50:
+        return wave_col * 1000           # microns → nm
+    elif wm < 10000:
+        return wave_col                  # nm
     else:
-        wave_nm = arr[:,wave_col] / 10
-    trans = arr[:, 1]
-    out = resample(wave_nm, trans, grid)
-    atm_curves["transmission_ground"] = round_arr(out, 5)
-    print(f"  transmission_ground: {arr.shape[0]} → {grid.size}")
-except Exception as e:
-    print(f"  transmission_ground: SKIP ({e})")
+        return wave_col / 10             # Å → nm
 
-# ---------- 2. Sky emission lines ----------
-print("--- Sky lines ---")
+def read_two_col_csv(path):
+    """Read a CSV/TXT with two numerical columns, returning (wave_nm, flux).
+
+    Tolerates a header row, comma or whitespace separation, and units in microns,
+    nm or Å (auto-detected from the median wavelength)."""
+    text = path.read_text()
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line: continue
+        # split by comma or whitespace
+        parts = [p.strip() for p in (line.split(",") if "," in line else line.split())]
+        if len(parts) < 2: continue
+        try:
+            a = float(parts[0]); b = float(parts[1])
+        except ValueError:
+            continue
+        rows.append((a, b))
+    if not rows:
+        raise ValueError("no numeric rows")
+    arr = np.array(rows, float)
+    return auto_wave_nm(arr[:,0]), arr[:,1]
+
+
+# ===========================================================================
+# 1. Global atmosphere transmission curves
+# ===========================================================================
+print("--- Atmosphere (global) ---")
+atm_curves = {}
+
+for fname, key in [
+    ("pwv_atm_combined_ground.csv", "pwv_kpno (ground)"),
+    ("pwv_atm.csv",                  "pwv_atm (KPNO)"),
+    ("transmission_ground.csv",      "transmission_ground"),
+    ("atm_transmission_secz1.5_1.6mm.txt", "atm_secz1.5_1.6mm"),
+]:
+    p = SRC / "Atm_transmission" / fname
+    try:
+        w_nm, t = read_two_col_csv(p)
+        out = resample(w_nm, t, grid)
+        atm_curves[key] = round_arr(np.clip(out, 0, 1.5), 4)
+        print(f"  {key:32s} {len(w_nm):6d} pts native")
+    except Exception as e:
+        print(f"  {key:32s} SKIP ({e})")
+
+
+# ===========================================================================
+# 2. Global sky emission line catalogues
+# ===========================================================================
+print("--- Sky lines (global) ---")
 sky_curves = {}
-try:
-    p = DATA / "Sky_emission_lines/spectra_0.2A.csv"
-    with open(p) as f:
-        rdr = _csv.reader(f)
-        rows = list(rdr)
-    hdr = rows[0]
-    arr = np.array(rows[1:], dtype=float)
-    # wavelength is in Å, flux in arbitrary units
-    wave_nm = arr[:,0] / 10
-    flux    = arr[:,1]
-    out = resample(wave_nm, flux, skygrid)
-    sky_curves["spectra_0.2A"] = round_arr(normalize(out), 4)
-    print(f"  spectra_0.2A: {arr.shape[0]} → {skygrid.size}")
-except Exception as e:
-    print(f"  spectra_0.2A: SKIP ({e})")
 
-# UV-specific sky lines
-try:
-    p = DATA / "Sky_emission_lines/UV_atm_lines.csv"
-    with open(p) as f:
-        rdr = _csv.reader(f)
-        rows = list(rdr)
-    hdr = rows[0]
-    arr = np.array(rows[1:], dtype=float)
-    # nm, counts
-    wave_nm = arr[:,0]
-    flux = arr[:,1]
-    out = resample(wave_nm, flux, skygrid)
-    sky_curves["UV_atm_lines"] = round_arr(normalize(out), 4)
-    print(f"  UV_atm_lines: {arr.shape[0]} → {skygrid.size}")
-except Exception as e:
-    print(f"  UV_atm_lines: SKIP ({e})")
+# These two files live in generic-etc (large), not in our data/sources to keep the repo small.
+ETC_DATA = Path("/Users/Vincent/Github/generic-etc/data")
+for src, key in [
+    (ETC_DATA / "Sky_emission_lines/spectra_0.2A.csv", "spectra_0.2A"),
+    (ETC_DATA / "Sky_emission_lines/UV_atm_lines.csv", "UV_atm_lines"),
+]:
+    try:
+        w_nm, f = read_two_col_csv(src)
+        out = resample(w_nm, f, skygrid)
+        sky_curves[key] = round_arr(normalize(out), 4)
+        print(f"  {key:20s} {len(w_nm)} pts")
+    except Exception as e:
+        print(f"  {key:20s} SKIP ({e})")
 
-# ---------- 3. Source spectra ----------
-print("--- Source spectra ---")
+
+# ===========================================================================
+# 3. Source SEDs — only locally available, not committed to etc-app
+# ===========================================================================
+print("--- Source SEDs ---")
 spectra = {}
 
-# 3a. FITS files in data/Spectra/ — h_*fos_spc.fits
-print("  FITS:")
+# 3a. FITS (HST/FOS QSOs)
 try:
     from astropy.io import fits
-    for f in sorted((DATA/"Spectra").glob("h_*fos_spc.fits")):
+    for f in sorted(SPEC_SRC.glob("h_*fos_spc.fits")):
         name = f.stem.replace("h_","").replace("fos_spc","").rstrip("_")
         try:
             with fits.open(f) as hdul:
-                # The HST FOS standard layout: data table in HDU 1, cols WAVELENGTH (Å), FLUX
                 d = hdul[1].data
-                if d is None or d.size == 0:
-                    print(f"    SKIP {f.name}: no data")
-                    continue
-                cols = [c.lower() for c in d.dtype.names]
+                if d is None or d.size == 0: continue
                 wcol = next((c for c in d.dtype.names if "wave" in c.lower() or "lam" in c.lower()), d.dtype.names[0])
                 fcol = next((c for c in d.dtype.names if "flux" in c.lower()), d.dtype.names[1])
                 wave_A = np.asarray(d[wcol]).ravel()
                 flux   = np.asarray(d[fcol]).ravel()
-                # Some FOS files are 2D (n_rows × n_samples per row)
-                if wave_A.ndim != 1:
-                    wave_A = wave_A.ravel()
-                    flux   = flux.ravel()
-                wave_nm = wave_A / 10
-                out = resample(wave_nm, flux, grid)
-                spectra[f"QSO: {name}"] = round_arr(normalize(out), 4)
-                print(f"    {name}: ok")
+                spectra[f"QSO: {name}"] = round_arr(normalize(resample(wave_A/10, flux, grid)), 4)
         except Exception as e:
             print(f"    SKIP {f.name}: {e}")
+    print(f"  FITS QSO: {sum(1 for k in spectra if k.startswith('QSO: '))}")
 except ImportError:
-    print("    astropy not installed → SKIP all FITS")
+    print("  astropy not installed — FITS SKIPped")
 
-# 3b. TXT files in QSO_SALVATO2015 and GAL_COSMOS_SED
-print("  TXT (QSO Salvato):")
-for f in sorted((DATA/"Spectra/QSO_SALVATO2015").glob("*.txt")):
+# 3b. Salvato QSO templates
+n = 0
+for f in sorted((SPEC_SRC/"QSO_SALVATO2015").glob("*.txt")):
     if "list" in f.name.lower(): continue
     try:
         arr = np.loadtxt(f)
         if arr.ndim != 2 or arr.shape[1] < 2: continue
-        wave_nm = arr[:,0]   # already in nm (file starts at 100)
-        flux    = arr[:,1]
-        out = resample(wave_nm, flux, grid)
-        spectra[f"QSO Salvato: {f.stem}"] = round_arr(normalize(out), 4)
-        print(f"    {f.stem}: ok ({arr.shape[0]} pts)")
-    except Exception as e:
-        print(f"    SKIP {f.name}: {e}")
+        spectra[f"QSO Salvato: {f.stem}"] = round_arr(normalize(resample(arr[:,0], arr[:,1], grid)), 4)
+        n += 1
+    except Exception:
+        pass
+print(f"  QSO Salvato: {n}")
 
-print("  TXT (GAL COSMOS):")
-for f in sorted((DATA/"Spectra/GAL_COSMOS_SED").glob("*.txt")):
+# 3c. COSMOS galaxy SEDs
+n = 0
+for f in sorted((SPEC_SRC/"GAL_COSMOS_SED").glob("*.txt")):
     if "list" in f.name.lower(): continue
     try:
         arr = np.loadtxt(f)
         if arr.ndim != 2 or arr.shape[1] < 2: continue
-        wave_nm = arr[:,0]
-        flux    = arr[:,1]
-        out = resample(wave_nm, flux, grid)
-        spectra[f"GAL COSMOS: {f.stem}"] = round_arr(normalize(out), 4)
-        print(f"    {f.stem}: ok ({arr.shape[0]} pts)")
-    except Exception as e:
-        print(f"    SKIP {f.name}: {e}")
+        spectra[f"GAL COSMOS: {f.stem}"] = round_arr(normalize(resample(arr[:,0], arr[:,1], grid)), 4)
+        n += 1
+    except Exception:
+        pass
+print(f"  GAL COSMOS: {n}")
 
-# 3c. STAR_LAGET
-print("  TXT (STAR Laget):")
-for f in sorted((DATA/"Spectra/STAR_LAGET").glob("*.txt")):
-    if "list" in f.name.lower(): continue
-    try:
-        arr = np.loadtxt(f)
-        if arr.ndim != 2 or arr.shape[1] < 2: continue
-        wave_nm = arr[:,0]
-        flux    = arr[:,1]
-        out = resample(wave_nm, flux, grid)
-        spectra[f"Star: {f.stem}"] = round_arr(normalize(out), 4)
-        print(f"    {f.stem}: ok ({arr.shape[0]} pts)")
-    except Exception as e:
-        print(f"    SKIP {f.name}: {e}")
 
-# ---------- Emit JSON ----------
+# ===========================================================================
+# 4. Instrument-specific curves
+# ===========================================================================
+print("--- Instrument-specific (from data/sources/Instruments) ---")
+
+atm_per_inst       = {}
+throughput_per_inst = {}
+sky_per_inst       = {}
+
+inst_root = SRC / "Instruments"
+if inst_root.exists():
+    for inst_dir in sorted(inst_root.iterdir()):
+        if not inst_dir.is_dir(): continue
+        name = inst_dir.name
+        notes = []
+
+        # Atmosphere
+        p = inst_dir / "Atmosphere_transmission.csv"
+        if p.exists():
+            try:
+                w_nm, t = read_two_col_csv(p)
+                if w_nm.size >= 2:
+                    atm_per_inst[name] = round_arr(np.clip(resample(w_nm, t, grid), 0, 1.5), 4)
+                    notes.append(f"atm({w_nm.size})")
+            except Exception as e:
+                notes.append(f"atm ERR ({e})")
+
+        # Throughput
+        p = inst_dir / "Throughput.csv"
+        if p.exists():
+            try:
+                w_nm, t = read_two_col_csv(p)
+                if w_nm.size >= 2:
+                    throughput_per_inst[name] = round_arr(np.clip(resample(w_nm, t, grid), 0, 1.5), 4)
+                    notes.append(f"th({w_nm.size})")
+            except Exception as e:
+                notes.append(f"th ERR ({e})")
+
+        # Sky emission lines
+        p = inst_dir / "Sky_emission_lines.csv"
+        if p.exists():
+            try:
+                w_nm, f = read_two_col_csv(p)
+                if w_nm.size >= 2:
+                    sky_per_inst[name] = round_arr(normalize(resample(w_nm, f, skygrid)), 4)
+                    notes.append(f"sky({w_nm.size})")
+            except Exception as e:
+                notes.append(f"sky ERR ({e})")
+
+        if notes:
+            print(f"  {name:24s} → {', '.join(notes)}")
+else:
+    print(f"  (no folder {inst_root})")
+
+
+# ===========================================================================
+# Emit JSON + JS wrapper
+# ===========================================================================
 payload = {
-    "grid": {"min_nm": GRID_MIN_NM, "max_nm": GRID_MAX_NM, "n": GRID_N},
-    "sky_grid": {"min_nm": SKY_MIN_NM, "max_nm": SKY_MAX_NM, "n": SKY_N},
-    "atm": atm_curves,
+    "grid":     {"min_nm": GRID_MIN_NM, "max_nm": GRID_MAX_NM, "n": GRID_N},
+    "sky_grid": {"min_nm": SKY_MIN_NM,  "max_nm": SKY_MAX_NM,  "n": SKY_N},
+    "atm":       atm_curves,
     "sky_lines": sky_curves,
-    "spectra": spectra,
+    "spectra":   spectra,
+    "atm_per_instrument":        atm_per_inst,
+    "throughput_per_instrument": throughput_per_inst,
+    "sky_lines_per_instrument":  sky_per_inst,
 }
 
-with open(OUT, "w") as f:
-    json.dump(payload, f, separators=(",",":"))
+OUT.write_text(json.dumps(payload, separators=(",",":")))
+OUTJS.write_text("window.SPECTRA_DATA_BAKED = " + json.dumps(payload, separators=(",",":")) + ";")
 size = OUT.stat().st_size
 print(f"\nSaved {OUT}  ({size/1024:.1f} KB)")
-print(f"  {len(spectra)} spectra, {len(atm_curves)} atm, {len(sky_curves)} sky lines")
+print(f"Saved {OUTJS}")
+print(f"  {len(spectra)} spectra, {len(atm_curves)} atm, {len(sky_curves)} sky line catalogues")
+print(f"  + per-instrument: {len(atm_per_inst)} atm, {len(throughput_per_inst)} throughput, {len(sky_per_inst)} sky")
