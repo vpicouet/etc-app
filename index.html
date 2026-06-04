@@ -1762,7 +1762,8 @@ function computeProfiles(sim){
 function svgCellSize(svgNode){
   const rect = svgNode.getBoundingClientRect();
   const W = Math.max(80, Math.round(rect.width));
-  const H = Math.max(60, Math.round(rect.height));
+  // Halve the height: the viewBox was being rendered ~2× the visible cell, so only the top half showed.
+  const H = Math.max(60, Math.round(rect.height / 2));
   return { W, H };
 }
 
