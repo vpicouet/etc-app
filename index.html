@@ -1291,27 +1291,34 @@ function drawImageView(){
 
 function drawSlitOverlay(svgId, pa, sim){
   // Detector image is W (cols, spectral) × H (rows, spatial).
-  // Slit extends along the spatial axis (rows) over Slitlength/pixel_scale pixels, centred on H/2.
-  // We draw two horizontal lines at the slit edges, and a small annotation showing the slit dims.
+  // The slit's GEOMETRIC footprint on the detector (before dispersion):
+  //   - horizontal (spectral axis): Slitwidth / pixel_scale  detector pixels
+  //   - vertical   (spatial axis):  Slitlength / pixel_scale detector pixels
+  // Centred on the image. Note: after dispersion, the slit light is spread across the full
+  // spectral axis — what we draw here is the geometric slit projection, not the dispersed trace.
   const svg = d3.select("#"+svgId);
   svg.selectAll("*").remove();
   if (!pa.spectrograph) return;  // imager: no slit
-  const slitH_pix = pa.Slitlength / pa.pixel_scale;   // detector pixels along H
-  // Convert to overlay coordinates: SVG uses 0..100 normalised viewport, but preserveAspectRatio="none"
-  // so we use the underlying canvas pixel space. Set viewBox to match.
+  const slitW_pix = pa.Slitwidth  / pa.pixel_scale;  // px on spectral axis (geometric)
+  const slitH_pix = pa.Slitlength / pa.pixel_scale;  // px on spatial axis
   svg.attr("viewBox", `0 0 ${sim.W} ${sim.H}`);
+  const x0 = sim.W/2 - slitW_pix/2;
   const y0 = sim.H/2 - slitH_pix/2;
-  const y1 = sim.H/2 + slitH_pix/2;
-  // Rectangle showing the slit footprint (full spectral extent × slit height)
-  svg.append("rect").attr("x", 0).attr("y", Math.max(0,y0))
-    .attr("width", sim.W).attr("height", Math.min(sim.H, slitH_pix))
-    .attr("fill","none").attr("stroke","#ff3").attr("stroke-width", Math.max(0.5, sim.H*0.005))
+  const w  = Math.min(sim.W, slitW_pix);
+  const h  = Math.min(sim.H, slitH_pix);
+  svg.append("rect").attr("x", Math.max(0,x0)).attr("y", Math.max(0,y0))
+    .attr("width", w).attr("height", h)
+    .attr("fill","none").attr("stroke","#ff3")
+    .attr("stroke-width", Math.max(0.6, sim.H*0.012))
     .attr("stroke-dasharray", `${sim.W*0.012} ${sim.W*0.008}`);
-  // Small label
-  svg.append("text").attr("x", sim.W*0.012).attr("y", Math.max(8, y0-2))
-    .attr("fill","#ff3").attr("font-size", Math.max(8, sim.H*0.07))
+  // Label above the slit rectangle
+  svg.append("text")
+    .attr("x", Math.max(2, x0))
+    .attr("y", Math.max(8, y0-2))
+    .attr("fill","#ff3")
+    .attr("font-size", Math.max(8, sim.H*0.07))
     .attr("font-family","-apple-system, sans-serif").attr("font-weight","600")
-    .text(`slit: ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″ (= ${slitH_pix.toFixed(1)} px along spatial)`);
+    .text(`slit ${pa.Slitwidth.toFixed(2)}″ × ${pa.Slitlength.toFixed(2)}″  (= ${slitW_pix.toFixed(1)} × ${slitH_pix.toFixed(1)} px)`);
 }
 
 function drawProfiles(sim){
