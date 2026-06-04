@@ -2,234 +2,838 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Generic ETC — Info</title>
+<title>Generic ETC — User Guide & Methodology</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+<!-- Same theme stack as the app -->
 <style>
   :root{
-    --bg:#f7f7f7; --panel:#ffffff; --line:#e2e2e2; --text:#1a1a1a; --muted:#666;
-    --accent:#348ABD;
     --header-h: 38px;
+    --radius:6px; --radius-sm:3px;
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", "IBM Plex Mono", Menlo, monospace;
+    /* Light defaults */
+    --bg:#f7f7f7; --bg-alt:#f0f0f0; --panel:#ffffff; --panel-2:#fafafa;
+    --line:#e2e2e2; --line-strong:#cccccc;
+    --text:#1a1a1a; --text-soft:#444; --muted:#666;
+    --header-bg:#fff; --header-text:var(--text);
+    --accent:#348ABD; --accent-2:#E24A33; --error:#c00;
+    --shadow-elev-1:0 1px 2px rgba(0,0,0,0.04);
+    --code-bg:#f0f0f0;
+  }
+  body[data-mode="dark"]{
+    --bg:#161a20; --bg-alt:#1c2128; --panel:#21262d; --panel-2:#1c2128;
+    --line:#30363d; --line-strong:#444c56;
+    --text:#e6edf3; --text-soft:#c9d1d9; --muted:#8b949e;
+    --header-bg:#0d1117; --header-text:#e6edf3;
+    --accent:#58a6ff; --accent-2:#ff7b72; --error:#f85149;
+    --shadow-elev-1:0 1px 2px rgba(0,0,0,0.4);
+    --code-bg:#0d1117;
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
-    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+    font:14px/1.55 var(--font-ui)}
+
+  /* Header */
   header{height:var(--header-h);display:flex;align-items:center;gap:10px;padding:0 12px;
-    border-bottom:1px solid var(--line);background:#fff;position:sticky;top:0;z-index:5}
+    border-bottom:1px solid var(--line);background:var(--header-bg);color:var(--header-text);
+    position:sticky;top:0;z-index:50}
   header h1{margin:0;font-size:14px;font-weight:600;flex:0 0 auto}
   header nav{flex:1;display:flex;gap:6px;align-items:center}
   header nav a{font-size:12px;color:var(--muted);text-decoration:none;padding:3px 8px;
-    border:1px solid transparent;border-radius:3px}
-  header nav a.active,header nav a:hover{background:#f0f0f0;color:var(--text);border-color:var(--line)}
-  main{max-width:880px;margin:0 auto;padding:18px 18px 60px}
-  h2{font-size:18px;margin:1.6em 0 0.4em;border-bottom:1px solid var(--line);padding-bottom:4px}
-  h3{font-size:15px;margin:1.2em 0 0.3em}
-  p{margin:0.5em 0}
-  ul{margin:0.4em 0 0.8em 1.2em;padding:0}
-  li{margin:0.15em 0}
-  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
-  pre{background:#f0f0f0;border:1px solid var(--line);border-radius:4px;padding:8px 10px;overflow:auto}
-  code{background:#eee;padding:1px 4px;border-radius:3px}
+    border:1px solid transparent;border-radius:var(--radius-sm)}
+  header nav a.active,header nav a:hover{background:var(--bg-alt);color:var(--text);border-color:var(--line)}
+  header .theme-controls{display:flex;gap:4px;align-items:center;flex:0 0 auto;margin-left:auto}
+  #theme-toggle{font-size:14px;width:26px;height:22px;line-height:1;padding:0;background:transparent;
+    border:1px solid var(--line);color:var(--text);border-radius:var(--radius-sm);cursor:pointer}
+  #theme-toggle:hover{background:var(--bg-alt)}
+
+  /* Layout: sticky TOC on the left, content on the right */
+  .docs{display:grid;grid-template-columns:240px minmax(0,1fr);gap:24px;
+    max-width:1080px;margin:0 auto;padding:18px 20px 80px}
+  aside.toc{position:sticky;top:calc(var(--header-h) + 12px);align-self:start;
+    max-height:calc(100vh - var(--header-h) - 24px);overflow:auto;
+    border-right:1px solid var(--line);padding:8px 14px 18px 0;font-size:13px}
+  aside.toc .toc-title{font-size:11.5px;color:var(--muted);text-transform:uppercase;
+    letter-spacing:0.06em;margin:0 0 8px 0;font-weight:700}
+  aside.toc ol{list-style:none;margin:0;padding:0;counter-reset:lvl1}
+  aside.toc ol > li{counter-increment:lvl1;margin:1px 0}
+  aside.toc ol > li > a::before{content:counter(lvl1) ". ";color:var(--muted);
+    font-variant-numeric:tabular-nums;font-family:var(--font-mono);font-size:11.5px}
+  aside.toc ol ol{margin-top:2px;padding-left:14px;counter-reset:lvl2}
+  aside.toc ol ol > li{counter-increment:lvl2}
+  aside.toc ol ol > li > a::before{content:counter(lvl1) "." counter(lvl2) " ";color:var(--muted);
+    font-variant-numeric:tabular-nums;font-family:var(--font-mono);font-size:11.5px}
+  aside.toc a{display:block;color:var(--text-soft);text-decoration:none;padding:2px 6px;
+    border-radius:3px;border-left:2px solid transparent;line-height:1.3}
+  aside.toc a:hover{background:var(--bg-alt);color:var(--text)}
+  aside.toc a.active{background:var(--bg-alt);color:var(--accent);border-left-color:var(--accent);font-weight:600}
+
+  main{min-width:0}
+  main h2{font-size:22px;margin:1.8em 0 0.5em;padding-bottom:6px;border-bottom:1px solid var(--line);
+    scroll-margin-top:calc(var(--header-h) + 12px)}
+  main h2:first-of-type{margin-top:0}
+  main h3{font-size:16px;margin:1.4em 0 0.4em;color:var(--text);
+    scroll-margin-top:calc(var(--header-h) + 12px)}
+  main h4{font-size:14px;margin:1.1em 0 0.3em;color:var(--text-soft);font-weight:700}
+  main p{margin:0.6em 0;color:var(--text-soft)}
+  main strong{color:var(--text)}
+  ul{margin:0.4em 0 0.9em 1.4em;padding:0}
+  li{margin:0.2em 0;color:var(--text-soft)}
+  code,pre{font-family:var(--font-mono);font-size:12.5px}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:3px;color:var(--text)}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:4px;padding:10px 12px;
+    overflow:auto;margin:0.8em 0}
   pre code{background:none;padding:0}
-  a{color:var(--accent)}
-  .callout{background:#fff8e1;border-left:3px solid #f0b400;padding:10px 14px;margin:1em 0;border-radius:4px}
-  .callout strong{color:#7a5a00}
-  .footer{color:var(--muted);font-size:12px;margin-top:40px;border-top:1px solid var(--line);padding-top:12px}
-  table{border-collapse:collapse;margin:8px 0}
-  th,td{border:1px solid var(--line);padding:4px 8px;text-align:left;font-size:13px}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  table{border-collapse:collapse;margin:0.8em 0;width:100%;font-size:13px}
+  th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;color:var(--text-soft);vertical-align:top}
+  th{background:var(--bg-alt);color:var(--text);font-weight:600}
+
+  .callout{background:var(--bg-alt);border-left:3px solid var(--accent);padding:10px 14px;
+    margin:1.2em 0;border-radius:0 4px 4px 0;font-size:13.5px}
+  .callout.warn{border-left-color:var(--accent-2)}
+  .callout strong{color:var(--text)}
+
+  figure{margin:1.2em 0;text-align:center}
+  figure img{max-width:100%;border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow-elev-1)}
+  figure figcaption{font-size:12px;color:var(--muted);margin-top:6px;font-style:italic;line-height:1.4}
+
+  /* MathJax sizing tweak so the maths matches the body line-height */
+  mjx-container{font-size:1em !important}
+  mjx-container[display="true"]{margin:0.7em 0 !important}
+
+  .footer{color:var(--muted);font-size:12px;margin-top:48px;border-top:1px solid var(--line);padding-top:14px}
+
+  /* Responsive */
+  @media (max-width: 820px){
+    .docs{grid-template-columns:1fr;padding:12px}
+    aside.toc{position:static;max-height:none;border-right:none;border-bottom:1px solid var(--line);
+      padding:8px 0 16px 0;margin-bottom:8px}
+  }
 </style>
+<link id="theme-css" rel="stylesheet" href="themes/twilight.css">
+
+<!-- MathJax for LaTeX equations -->
+<script>
+window.MathJax = {
+  tex: { inlineMath: [["$","$"],["\\(","\\)"]], displayMath: [["$$","$$"],["\\[","\\]"]] },
+  options: { skipHtmlTags: ["script","noscript","style","textarea","pre","code"] }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 </head>
+
 <body>
 
 <header>
   <h1>Generic ETC</h1>
   <nav>
     <a href="./">App</a>
-    <a href="./info.html" class="active">Info</a>
+    <a href="./info.html" class="active">Docs</a>
     <a href="https://github.com/vpicouet/etc-app" target="_blank">GitHub</a>
     <a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit" target="_blank">Instrument DB</a>
   </nav>
+  <span class="theme-controls"><button id="theme-toggle" title="Toggle dark / light mode">🌙</button></span>
 </header>
+
+<div class="docs">
+
+<aside class="toc">
+  <p class="toc-title">Contents</p>
+  <ol>
+    <li><a href="#about">About this tool</a></li>
+    <li><a href="#quickstart">Quick start</a></li>
+    <li>
+      <a href="#ui">User interface</a>
+      <ol>
+        <li><a href="#ui-layout">Layout overview</a></li>
+        <li><a href="#ui-snr">SNR view</a></li>
+        <li><a href="#ui-image">Spectro image view</a></li>
+        <li><a href="#ui-ifs">IFS view</a></li>
+        <li><a href="#ui-imgopts">Image options & colormap</a></li>
+        <li><a href="#ui-deps">Parameter dependencies</a></li>
+      </ol>
+    </li>
+    <li><a href="#params">Parameters reference</a></li>
+    <li>
+      <a href="#snr">SNR calculation</a>
+      <ol>
+        <li><a href="#snr-flux">Flux to electrons</a></li>
+        <li><a href="#snr-modes">SNR modes (per pix / Res / Source)</a></li>
+        <li><a href="#snr-slit">Slit aperture losses</a></li>
+        <li><a href="#snr-noise">Noise budget &amp; total SNR</a></li>
+        <li><a href="#snr-emccd">EMCCD &amp; photon counting</a></li>
+        <li><a href="#snr-sb">Surface brightness limit</a></li>
+      </ol>
+    </li>
+    <li>
+      <a href="#image">Image simulator</a>
+      <ol>
+        <li><a href="#image-spectrum">Source spectrum</a></li>
+        <li><a href="#image-shape">Spatial × spectral construction</a></li>
+        <li><a href="#image-noise">Per-voxel noise realisation</a></li>
+        <li><a href="#image-sky">Sky gated by slit</a></li>
+      </ol>
+    </li>
+    <li>
+      <a href="#ifs">IFS cube</a>
+      <ol>
+        <li><a href="#ifs-cube">Separable PSF × spectrum cube</a></li>
+        <li><a href="#ifs-slice">Slice &amp; integrated spectrum</a></li>
+      </ol>
+    </li>
+    <li><a href="#limits">Limitations</a></li>
+    <li><a href="#resources">Resources</a></li>
+  </ol>
+</aside>
 
 <main>
 
-<div class="callout">
-  <strong>About this page.</strong> <code>etc-app</code> is a JavaScript / D3 migration of the
-  <a href="https://github.com/vpicouet/generic-etc">vpicouet/generic-etc</a> Jupyter ETC.
-  It runs entirely in the browser — no server, no Python — so it can be hosted on GitHub Pages.
-  Compared to the original notebook, this version <strong>does not include the image / IFU
-  cube simulator nor the spectra/cube data pipeline</strong>: only the SNR calculator
-  (noise budget, contributions, SNR, surface-brightness limits) is ported. For the image &amp;
-  cube simulators, please use the original notebook.
-</div>
+<!-- ============================================================ -->
+<h2 id="about">1 · About this tool</h2>
 
-<h2>ETC — SNR calculator</h2>
+<p>
+<strong>etc-app</strong> is a browser-only port of the
+<a href="https://github.com/vpicouet/generic-etc">Generic ETC</a> Jupyter notebook,
+written in JavaScript and D3 so it runs entirely client-side and can be served from
+GitHub Pages. It sits at the intersection of an exposure-time calculator and a
+spectrograph simulator: not only does it predict the signal-to-noise ratio of a
+target observation, it lets you explore how the SNR responds to <em>any</em>
+instrument or observation parameter, and renders simulated detector images and
+IFS cubes that you can manipulate live.
+</p>
 
-<h3>Description</h3>
-<p>This straightforward ETC provides an estimated signal-to-noise ratio for any spectro-imager
-instrument. Its key attributes lie in its versatility, user-friendly interface, and diverse
-plotting options. The ETC is designed to accommodate any spectro-imager, and scientists can
-contribute new instruments or configurations
-<a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit?pli=1#gid=2066284077">on the shared spreadsheet</a>
-for direct utilization within the tool.</p>
-
-<p>The ETC GUI offers a quick overview of essential instrument parameters and constraints,
-along with insights into tradeoffs, potential optimizations and mitigation strategies.
-Plots dynamically adjust as parameters are modified.</p>
-
-<h3>Interest and Philosophy</h3>
-<p>Exposure Time Calculators are integral tools for optimizing observational strategies in
-astronomy, typically tailored to specific instruments. <em>Generic ETC</em> takes a different
-route: a broadly applicable, generic ETC built on a shared instrument database.</p>
-
-<p>Beyond the nominal use of predicting the SNR of a source given the site, instrument and
-observation parameters, it allows analyzing the evolution of the SNR with any instrument
-parameter — useful to examine instrument efficiency, explore SNR evolution under different
-scenarios, and run trade studies. The current database already encompasses more than 20
-instruments, some with several channels or configurations. Predictions have been
-cross-checked with ETC-42 on several spectrograph designs.</p>
-
-<h2>Outputs (this web app)</h2>
-
-<h3>SNR visualization</h3>
-<p>The SNR plot offers a straightforward depiction of noise budgets concerning various
-variables that can be fine-tuned or mitigated to enhance instrument sensitivity:</p>
-<ul>
-  <li><strong>Panel 1 — Noise budget.</strong> Noise from each source (Signal, Dark, Sky, RN, CIC, Extra) in electrons per pixel per exposure, plus the quadratic sum.</li>
-  <li><strong>Panel 2 — Contributions stack.</strong> The mean electron-per-pixel value for each component (pre-stacking), scaled by the number of pixels used.</li>
-  <li><strong>Panel 3 — SNR stack.</strong> The relative fractions of all noise sources per resolution element over N frames, and the resulting SNR.</li>
-  <li><strong>Panel 4 — Surface brightness limits.</strong> log<sub>10</sub> of the SNR=5 limiting surface brightness per pixel, per resolution element, and per source.</li>
-</ul>
+<p>
+The instrument database is shared with the Python ETC and lives in a
+<a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit">Google Sheet</a>.
+The application loads it through the public <code>gviz/tq</code> CSV endpoint, so
+adding a new spectrograph configuration in the sheet makes it immediately available
+in the app without any code change.
+</p>
 
 <div class="callout">
-  <strong>Not in this web version.</strong> The original notebook also includes:
-  <ul style="margin-top:4px">
-    <li>A <em>spectra simulator</em> (single &amp; stacked detector images, histograms, profiles)</li>
-    <li>An <em>IFU cube simulator</em> (3D spatio-spectral data cubes for IFS instruments)</li>
-    <li>Wavelength-dependent throughput / atmospheric transmission curves</li>
-    <li>Pre-loaded source spectra (galaxy SED, QSO templates) and emission cubes</li>
-    <li>EMCCD photon-counting threshold optimisation</li>
-  </ul>
-  For those, use the Python notebook at
-  <a href="https://github.com/vpicouet/generic-etc">vpicouet/generic-etc</a>.
+<strong>Scope.</strong> This is the <em>SNR + image simulator</em> half of the
+original notebook, with a few simplifications:
+<ul>
+  <li>Source SEDs, atmosphere curves and sky-line catalogues are <strong>baked</strong>
+      into <code>data/spectra.js</code> at build time on a common wavelength grid;</li>
+  <li>The EMCCD photon-counting threshold optimisation (the
+      <code>interpolate_optimal_threshold</code> lookup of the Python code) is
+      replaced by a simpler analytic miscount model — see
+      <a href="#snr-emccd">§5.5</a>;</li>
+  <li>Smearing, cosmic-ray streaks and the full IFU pipeline (slicer edge losses,
+      slice-to-slice throughput variations) are not modelled.</li>
+</ul>
+Accuracy is sufficient for trade studies, design exploration, instrument
+comparison and teaching. For final observation preparation an instrument-specific
+ETC should be used when available.
 </div>
 
-<h2>Parameters</h2>
+<figure>
+  <img src="images/full_screen_tab1_and_params.jpg" alt="SNR view with parameter panel">
+  <figcaption>Figure 1 — The SNR view. Left: four stacked panels (noise budget,
+  contributions, SNR contributions and SNR=5 surface-brightness limit) as a
+  function of any selected parameter. Right: collapsible parameter accordions
+  (Source, Strategy, Instrument, Spectrograph, Detector). The vertical dashed
+  cursor on each panel is draggable and updates the current parameter value.</figcaption>
+</figure>
 
-<p>All instrument parameters can be used as the x-axis to analyze their impact on SNR.
-Their units are described in the
-<a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit?usp=sharing">instrument spreadsheet</a>
-(as remarks) and in slider tooltips.</p>
+<!-- ============================================================ -->
+<h2 id="quickstart">2 · Quick start</h2>
 
-<h3>Source</h3>
+<ol>
+  <li>Pick an instrument in the <strong>Instrument</strong> dropdown of the top
+      bar. The accordions below are populated automatically.</li>
+  <li>Pick the parameter you want to vary in <strong>X axis</strong>. Equivalently,
+      click on a parameter <em>label</em> in an accordion (the active x-axis is
+      highlighted in orange).</li>
+  <li>Pick an integration mode in <strong>SNR</strong> (per pixel, per resolution
+      element, per source, or per source × 2 spectral pixels — see
+      <a href="#snr-modes">§5.2</a>).</li>
+  <li>The four SNR panels render in real time. <strong>Drag the vertical dashed
+      line</strong> horizontally to set the current value of the swept parameter
+      — the slider on the right syncs.</li>
+  <li>Switch to <strong>Spectro image</strong> to see a simulated detector frame
+      (single exposure and stack of <code>N_images_true</code> frames). Right-click +
+      drag (or ctrl-click + drag on a Mac trackpad) on either image bias/contrast the
+      colormap, DS9-style. Double-click resets.</li>
+  <li>For instruments declared as integral-field (<code>dimensions=3</code> in the
+      sheet), an <strong>IFS</strong> view appears with two cube λ-slices and a
+      draggable extraction box.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="ui">3 · User interface</h2>
+
+<h3 id="ui-layout">3.1 Layout overview</h3>
+<p>
+The viewport is split into two columns. The left column hosts the plot area
+with three switchable views (SNR / Spectro image / IFS). The right column hosts
+the controls: a top bar with the instrument selector and global toggles, the
+parameter accordions, and at the bottom the <em>Parameter dependencies</em> and
+<em>Image options</em> accordions.
+</p>
+
+<h3 id="ui-snr">3.2 SNR view</h3>
+<p>Four stacked sub-panels share the same x-axis (Figure 1):</p>
+<ol>
+  <li><strong>Noise budget</strong> — noise contributions (signal, dark, sky,
+      read noise, CIC, extra background) and their quadratic sum.</li>
+  <li><strong>Contribution stack</strong> — average electron counts per pixel
+      (or per resolution element / per source, depending on the SNR mode)
+      stacked on top of each other.</li>
+  <li><strong>SNR contribution stack</strong> — the same components rescaled
+      so the stack sums to the total SNR. Useful to identify which noise source
+      drives the SNR at any point of the parameter sweep.</li>
+  <li><strong>Surface-brightness limit</strong> — <span style="white-space:nowrap">SNR&nbsp;=&nbsp;5</span>
+      limiting surface brightness per pixel, per resolution element and per
+      source, in <code>log₁₀(erg/cm²/s/asec²)</code>.</li>
+</ol>
+<p>
+Each panel has its own legend overlaid in the top-right corner. Hovering over a
+panel shows a tooltip with the value of every series at the cursor's x position.
+The vertical dashed cursor at the current parameter value is draggable; releasing
+it updates the corresponding slider and re-renders.
+</p>
+
+<h3 id="ui-image">3.3 Spectro image view</h3>
+<figure>
+  <img src="images/spectra_tab.jpg" alt="Spectro image view">
+  <figcaption>Figure 2 — Spectro image view. Top: simulated detector frames
+  (single exposure on top, stacked on the bottom), with the slit footprint
+  outlined in black. Bottom row: spatial profile, spectral profile, optical
+  curves (throughput, atmospheric transmission, sky lines, source spectrum)
+  and the pixel-value histogram.</figcaption>
+</figure>
+<p>
+The two top images are the same simulated detector frame rendered with a Poisson
+realisation: the upper one is a single exposure (high noise), the lower one is
+the stack of <code>N_images_true</code> frames (Poisson summed analytically, mean RN
+divided by √N). The dashed black rectangle marks the geometric slit projection
+(<code>Slitwidth/pixel_scale</code> × <code>Slitlength/pixel_scale</code> in detector pixels).
+The four panels below are described in <a href="#image">§6</a>.
+</p>
+
+<h3 id="ui-ifs">3.4 IFS view</h3>
+<figure>
+  <img src="images/IFS_tab.jpg" alt="IFS cube view">
+  <figcaption>Figure 3 — IFS view. Top: two cube λ-slices (single and stacked
+  exposures, H × n3 spaxels) at the wavelength marked by the red cursor on the
+  spectrum below. Drag the cursor to re-slice live. The black rectangle on the
+  stacked image is the extraction region — drag it (move, or grab the NW/SE
+  corners to resize) to update the integrated spectrum.</figcaption>
+</figure>
+<p>
+The IFS view appears only when the current instrument has <code>dimensions=3</code>
+(or <code>IFS=1</code>) in the sheet. The number of slicers/fibres
+<code>n3</code> is computed from the field of view and the slit width — see
+<a href="#ifs">§7</a>.
+</p>
+
+<h3 id="ui-imgopts">3.5 Image options & colormap</h3>
+<p>
+The <strong>Image options</strong> accordion controls the simulator only (no
+effect on the SNR plot):
+</p>
 <ul>
-  <li><strong>Flux</strong> (F): source surface brightness in <code>erg/cm²/s/arcsec²/Å</code>.</li>
-  <li><strong>Sky</strong> (S): sky background illumination in <code>erg/cm²/s/arcsec²/Å</code>.</li>
-  <li><strong>Source extension</strong> (σ<sub>x</sub>): spatial extent of the source in arcsec (σ).</li>
-  <li><strong>Source's line width</strong> (σ<sub>λ</sub>): spectral extent of the source / emission line in Å.</li>
+  <li><strong>Display mode</strong> — <code>Sim image</code> (noisy realisation),
+      <code>Source</code> (noiseless target), <code>Convolved source</code>, <code>SNR</code>
+      (per-pixel SNR map).</li>
+  <li><strong>Spectrum</strong> — the source spectral shape: a Gaussian emission
+      line (<em>Baseline emission line</em>) or one of ~99 baked SEDs
+      (HST/FOS QSOs, COSMOS galaxies, Salvato QSO templates).</li>
+  <li><strong>Atm curve</strong> — <code>pwv_kpno</code> (ground) or
+      <code>transmission_ground</code>. If the curve is identically zero across
+      the detector window (e.g. <code>pwv_kpno</code> in the deep UV) the app falls
+      back to a flat atm so the source remains visible.</li>
+  <li><strong>Sky-line catalogue</strong> — <code>spectra_0.2A</code> (Paranal-like)
+      or <code>UV_atm_lines</code> for UV instruments.</li>
+  <li><strong>Throughput(λ) shaping</strong>, <strong>Atmospheric absorption</strong>,
+      <strong>Sky emission lines</strong> — three independent toggles to apply
+      the curves above.</li>
+  <li><strong>Colormap picker</strong> — six gradient strips
+      (viridis / inferno / plasma / cividis / gray / hot). Click one to apply
+      to all <code>imshow</code> canvases. The choice is persisted in
+      <code>localStorage</code>.</li>
 </ul>
 
-<h3>Observing strategy</h3>
+<h3 id="ui-deps">3.6 Parameter dependencies</h3>
+<p>
+Mirror of the <code>SelectMultiple</code> dependency widget of <code>Observation.py</code>.
+Tick a box and the dependent parameter is computed from the others on every
+update (its slider is hidden):
+</p>
 <ul>
-  <li><strong>Observed wavelength</strong> (λ): effective wavelength in nm.</li>
-  <li><strong>Exposure time</strong> (t<sub>exp</sub>): individual frame exposure time in seconds.</li>
-  <li><strong>Total acquisition time</strong> (T<sub>tot</sub>): total acquisition time in hours.</li>
-  <li><strong>Atmospheric transmission</strong> (Atm<sub>%</sub>): %/100.</li>
-  <li><strong>λ Stack</strong>: number of spectral pixels stacked.</li>
-  <li><strong>Readout time</strong>: time between exposures (seconds).</li>
+  <li><code>dispersion = 10 · λ / R / 2</code> — Nyquist sampling of the spectral
+      resolution element.</li>
+  <li><code>pixel_scale = 2.35 · PSF_RMS_det / 2</code> — Nyquist sampling of the
+      spatial PSF.</li>
 </ul>
+<p>
+Dependencies are vector-aware: if the dependent parameter is itself swept on the
+x-axis, the formula is applied at each x.
+</p>
 
-<h3>Instrument design</h3>
+<!-- ============================================================ -->
+<h2 id="params">4 · Parameters reference</h2>
+
+<p>
+Every parameter usable as an x-axis can be inspected in two ways:
+its full name + units appears in the slider tooltip (hover), and clicking the
+label highlights it as the active x-axis.
+The groups below mirror the accordion structure in the app.
+</p>
+
+<table>
+<thead><tr><th>Group</th><th>Parameter</th><th>Symbol</th><th>Unit</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td rowspan="4"><strong>Source</strong></td>
+  <td>Source flux</td><td>$F$</td><td>erg/cm²/s/asec²/Å</td><td>Diffuse surface brightness</td></tr>
+<tr><td>Sky background</td><td>$F_\text{sky}$</td><td>erg/cm²/s/asec²/Å</td><td>Zodiacal + galactic / sky continuum</td></tr>
+<tr><td>σ source</td><td>$\sigma_x$</td><td>arcsec</td><td>Spatial RMS (Gaussian)</td></tr>
+<tr><td>Equivalent width</td><td>$\sigma_\lambda$</td><td>Å</td><td>Spectral RMS for the line model</td></tr>
+<tr><td rowspan="6"><strong>Strategy</strong></td>
+  <td>Atmosphere</td><td>$A_\%$</td><td>0–1</td><td>Scalar transmission</td></tr>
+<tr><td>Acquisition time</td><td>$T_\text{tot}$</td><td>h</td><td>Total wall-clock time</td></tr>
+<tr><td>Exposure time</td><td>$t_\text{exp}$</td><td>s</td><td>Single frame</td></tr>
+<tr><td>Readout time</td><td>$t_\text{RO}$</td><td>s</td><td>Between frames</td></tr>
+<tr><td>Observed λ</td><td>$\lambda$</td><td>nm</td><td>Central wavelength</td></tr>
+<tr><td>λ Stack</td><td>$N_\text{stack}^\lambda$</td><td>pix</td><td>Spectral binning (imager only)</td></tr>
+<tr><td rowspan="5"><strong>Instrument</strong></td>
+  <td>Collecting area</td><td>$A_\text{tel}$</td><td>m²</td><td>After obstruction</td></tr>
+<tr><td>Pixel scale</td><td>$p$</td><td>″/pix</td><td>Plate scale</td></tr>
+<tr><td>Throughput</td><td>$T_\%$</td><td>0–1</td><td>Optics, excluding QE and atm</td></tr>
+<tr><td>σ mask, σ det</td><td>$\sigma_\text{mask}, \sigma_\text{det}$</td><td>arcsec</td><td>PSF RMS at slit / at detector</td></tr>
+<tr><td>Throughput FWHM</td><td>$\Delta\lambda_T$</td><td>Å</td><td>For imager-mode Gaussian shaping</td></tr>
+<tr><td rowspan="5"><strong>Spectrograph</strong></td>
+  <td>Resolution</td><td>$R$</td><td>—</td><td>$\lambda/\Delta\lambda$</td></tr>
+<tr><td>Slit width</td><td>$Sw$</td><td>arcsec</td><td>Or slicer / fibre Ø</td></tr>
+<tr><td>Slit length</td><td>$Sl$</td><td>arcsec</td><td>Or slicer / fibre Ø (circular)</td></tr>
+<tr><td>Dispersion</td><td>$d$</td><td>Å/pix</td><td>At the detector</td></tr>
+<tr><td>Bandwidth</td><td>$B$</td><td>Å</td><td>Detector spectral coverage</td></tr>
+<tr><td rowspan="7"><strong>Detector</strong></td>
+  <td>QE</td><td>$Q_\%$</td><td>0–1</td><td>Quantum efficiency</td></tr>
+<tr><td>Read noise</td><td>RN</td><td>e⁻/pix</td><td>Before EM-gain division</td></tr>
+<tr><td>Dark current</td><td>$D$</td><td>e⁻/pix/h</td><td></td></tr>
+<tr><td>Extra background</td><td>$B_\text{extra}$</td><td>e⁻/pix/h</td><td>Stray light, etc.</td></tr>
+<tr><td>CR loss</td><td>CR</td><td>1/s</td><td>Pixel-loss rate per second</td></tr>
+<tr><td>EM gain</td><td>$G$</td><td>e⁻/e⁻</td><td>EMCCD only; set to 1 elsewhere</td></tr>
+<tr><td>CIC charge</td><td>CIC</td><td>e⁻/pix</td><td>Clock-induced charge per frame (EMCCD)</td></tr>
+</tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="snr">5 · SNR calculation</h2>
+
+<p>
+The SNR pipeline mirrors <code>Observation.initilize</code> in the Python notebook.
+Below we use $F$ for the source surface brightness, $F_\text{sky}$ for the sky
+background, $\lambda$ for the observed wavelength in nm and $\Omega$ for an
+integration area in arcsec².
+</p>
+
+<h3 id="snr-flux">5.1 Flux to electrons</h3>
+<p>
+Fluxes are first converted from energy units to <em>continuum units</em>
+(photons cm⁻² s⁻¹ sr⁻¹ Å⁻¹):
+</p>
+\[
+F_\text{CU} \;=\; \frac{F}{\dfrac{h c}{\lambda}\,\Bigl(\dfrac{\pi}{180\cdot 3600}\Bigr)^{2}}
+\quad\text{with $\lambda$ in cm, the bracket converts arcsec² to steradians.}
+\]
+<p>
+The wavelength-dependent <strong>effective area</strong> combines QE, optical
+throughput, atmospheric transmission and physical aperture:
+</p>
+\[
+A_\text{eff}(\lambda) \;=\; Q_\%\;T_\%\;A_\%\;\bigl(A_\text{tel}\cdot 10^{4}\bigr)
+\quad\text{[cm²]}
+\]
+<p>
+Surface brightness becomes detector counts per pixel per exposure via a
+<em>conversion factor</em> $\mathcal{C}_\text{CU\!\to\!e^-}$ that integrates over
+the spatial and spectral footprint of the selected SNR mode:
+</p>
+\[
+\boxed{
+\;S_{e^-/\mathrm{pix}/\mathrm{exp}} \;=\; F_\text{CU}\;\mathcal{C}_\text{CU\!\to\!e^-}\;t_\text{exp}\;f_\text{slit}\;
+}
+\]
+<p>where $f_\text{slit}$ is the fraction of the source flux that passes the slit
+(see <a href="#snr-slit">§5.3</a>).</p>
+
+<h3 id="snr-modes">5.2 SNR modes</h3>
+<p>The integration footprint depends on the mode selected in the
+<strong>SNR</strong> dropdown:</p>
+<table>
+<thead><tr><th>Mode</th><th>$\Omega_\text{spatial}$</th><th>$\Delta\lambda_\text{spectral}$</th><th>Typical use</th></tr></thead>
+<tbody>
+<tr><td>per pix</td><td>$p^2$</td><td>$d$</td><td>Single detector pixel</td></tr>
+<tr><td>per Res elem</td><td>spatial PSF (px) × spectral PSF (px)</td><td>$\lambda/R$</td><td>Standard resolution-element SNR</td></tr>
+<tr><td>per Source</td><td>Source × PSF spatial extent</td><td>$\min(\sigma_\lambda, B)$</td><td>Whole source flux, all line</td></tr>
+<tr><td>per Source × 2λpix</td><td>Source × PSF spatial extent</td><td>Adaptive 2/4/8 px scaling with slicer width</td><td>IFS (KCWI-style extraction)</td></tr>
+</tbody>
+</table>
+
+<p>The integrated quantity is then:</p>
+\[
+N_\text{pix} \;=\; \begin{cases}
+1 & \text{per pix}\\
+\lceil \text{elem\_size}\rceil & \text{per Res}\\
+\lceil \text{pixels\_total\_source}\rceil & \text{per Source}\\
+\text{KCWI-style adaptive count} & \text{per Source}\times 2\lambda\text{pix}
+\end{cases}
+\]
+
+<h3 id="snr-slit">5.3 Slit aperture losses</h3>
+<p>
+For slit and fibre spectrographs the source PSF is partially cut by the aperture.
+We use the Gaussian-PSF / rectangular-slit erf form, separable in the two spatial
+directions:
+</p>
+\[
+f_\text{slit} \;=\; \mathrm{erf}\!\left(\frac{Sl}{2\sqrt{2}\,\sigma_\text{mask}}\right)
+              \cdot\mathrm{erf}\!\left(\frac{Sw}{2\sqrt{2}\,\sigma_\text{mask}}\right)
+\quad\text{(non-IFS)}
+\]
+<p>For IFS instruments, only the slit-<em>length</em> term applies, because the
+slicer width is sampled by adjacent slices.</p>
+<p>For circular fibres an extra $\pi/4$ disc-vs-square correction is applied to
+the input flux.</p>
+
+<h3 id="snr-noise">5.4 Noise budget &amp; total SNR</h3>
+<p>
+The effective number of frames in the stack accounts for readout overhead and
+cosmic-ray pixel loss:
+</p>
+\[
+N_\text{img} \;=\; \dfrac{T_\text{tot}\cdot 3600}{t_\text{exp}+t_\text{RO}}
+\,\bigl(1-\min(\mathrm{CR}\cdot(t_\text{exp}+t_\text{RO}/2),\,1)\bigr)
+\]
+<p>
+Each noise source is a per-pixel-per-frame standard deviation. With $\text{ENF}$
+the excess noise factor (1 in photon-counting mode or no EM gain; otherwise
+$\sqrt{2}$):
+</p>
+\[
+\sigma_F = \sqrt{S\,\text{ENF}}, \quad
+\sigma_S = \sqrt{F_\text{sky\,e^-}\,\text{ENF}}, \quad
+\sigma_D = \sqrt{D\,\dfrac{t_\text{exp}}{3600}\,\text{ENF}}
+\]
+\[
+\sigma_\text{CIC} = \sqrt{\text{CIC}\,\text{ENF}}, \quad
+\sigma_\text{B} = \sqrt{B_\text{extra}\,\dfrac{t_\text{exp}}{3600}\,\text{ENF}}, \quad
+\sigma_\text{RN} = \text{RN}_\text{eff}
+\]
+<p>
+The total integrated signal and noise, with $N_\text{stack}=N_\text{img}$,
+$N_\text{pix}$ from §5.2 and $N_\lambda$ the spectral bin count
+(<code>lambda_stack</code> for imagers, 1 for spectro):
+</p>
+\[
+\kappa \;=\; \sqrt{N_\text{pix}\,N_\lambda\,N_\text{stack}}
+\]
+\[
+\boxed{
+\quad \mathrm{SNR} \;=\;
+\frac{ S \,\kappa^{2} }
+     { \kappa\,\sqrt{ \sigma_F^{2}+\sigma_S^{2}+\sigma_D^{2}+\sigma_\text{CIC}^{2}+\sigma_\text{B}^{2}+\sigma_\text{RN}^{2} } }
+\quad
+}
+\]
+<p>
+The third panel of the SNR view shows the relative contribution of each
+$\sigma_i^{2}/\sigma_\text{tot}^{2}$ rescaled by the total SNR, which is the
+quickest way to spot which noise term dominates at any point of the parameter
+sweep.
+</p>
+
+<h3 id="snr-emccd">5.5 EMCCD &amp; photon counting</h3>
+<p>
+For EMCCDs the avalanche register adds an excess noise factor
+$\text{ENF}=\sqrt{2}$ when the gain is on. The read noise relative to the
+amplified signal is reduced by the gain:
+</p>
+\[
+\mathrm{RN}_\text{eff} \;=\; \dfrac{\mathrm{RN}}{G}\quad\text{(analogue regime)}
+\]
+<p>
+In the deep photon-counting regime ($\mathrm{RN}_\text{eff} \lesssim 0.3$ e⁻),
+the effective noise is no longer a Gaussian sigma — it becomes the
+<em>miscount probability</em> at the thresholding step. We use a smooth
+analytic model (Picouet 2025) instead of the lookup table of the Python ETC:
+</p>
+\[
+\mathrm{RN}_\text{eff} \;=\;
+\begin{cases}
+2\,\mathrm{sf}\!\left(0.5;\,0,\mathrm{RN}_\text{eff}\right) & \mathrm{RN}_\text{eff}<0.3 \\
+\text{linear interp.} & 0.3 \le \mathrm{RN}_\text{eff} \le 0.5 \\
+\mathrm{RN}_\text{eff} & \mathrm{RN}_\text{eff}>0.5
+\end{cases}
+\]
+<p>
+where $\mathrm{sf}$ is the Gaussian survival function. The transition keeps the
+mapping continuous between the analogue and counting regimes. The
+threshold-optimisation lookup table that the Python ETC carries (
+<code>interpolate_optimal_threshold</code>) is not bundled in this web port,
+so the value is approximate.
+</p>
+
+<h3 id="snr-sb">5.6 Surface brightness limit</h3>
+<p>
+The bottom SNR panel shows the surface brightness that achieves $\mathrm{SNR}=5$,
+computed by inverting the SNR equation:
+</p>
+\[
+\Sigma_\text{lim}(n\sigma)\;=\;
+\frac{n^{2}\,\text{ENF}+n\sqrt{4\sigma_\text{tot}^{2}-4\sigma_F^{2}+\text{ENF}^{2}n^{2}}}{2}
+\quad[e^{-}]
+\]
+<p>
+This is then back-converted to ergs and divided by the spatial element size to
+report <em>per pixel</em>, <em>per resolution element</em> and <em>per source</em>
+limits in <code>log₁₀</code> units.
+</p>
+
+<!-- ============================================================ -->
+<h2 id="image">6 · Image simulator</h2>
+
+<h3 id="image-spectrum">6.1 Source spectrum</h3>
+<p>
+The spectral profile $\phi(\lambda)$ along the detector spectral axis is built
+from one of two sources:
+</p>
 <ul>
-  <li><strong>Collecting area</strong> (A): physical collecting area in m².</li>
-  <li><strong>Plate scale</strong> (P): pixel plate scale in ″/pix.</li>
-  <li><strong>Throughput</strong> (T<sub>%</sub>): instrument throughput at effective wavelength (not including detector QE and atmosphere).</li>
-  <li><strong>Spatial resolution</strong> (R<sub>mask</sub>, R<sub>det</sub>): at the mask and at the detector.</li>
-  <li><strong>Throughput FWHM</strong> (imager mode): bandpass FWHM in Å.</li>
+  <li><strong>Baseline emission line</strong> — a Gaussian centred at $\lambda$
+      with $\sigma=\sqrt{\sigma_\text{spec}^{2}+\sigma_\text{line}^{2}}$ (PSF
+      convolved with the source line width);</li>
+  <li><strong>Baked SED</strong> (~99 templates: QSO HST/FOS, COSMOS galaxies,
+      Salvato QSO) — interpolated on the detector wavelength grid in the source
+      rest frame (via the redshift) and normalised by its
+      <em>mean inside the detector window</em>, so the source remains visible
+      even when its peak lies far from the observed wavelength.</li>
 </ul>
+<p>Throughput$(\lambda)$ and atmospheric transmission$(\lambda)$ multiply the profile if
+their toggles are on:</p>
+\[
+\phi(\lambda)\;\leftarrow\;\phi(\lambda)\;T_\%(\lambda)\;A_\%(\lambda)
+\]
+<p>
+Throughput$(\lambda)$ is modelled as a Gaussian centred at the observed $\lambda$
+with FWHM $\Delta\lambda_T$; atmospheric transmission is taken from the baked
+<code>pwv_kpno</code> or <code>transmission_ground</code> curve.
+</p>
 
-<h3>Spectrograph design</h3>
+<h3 id="image-shape">6.2 Spatial × spectral construction</h3>
+<p>
+We follow the Python ETC and keep the spatial / spectral / slit profiles
+<em>peak-normalised</em> (not sum-normalised):
+</p>
+\[
+\phi_\text{spat}(j)=\exp\!\Bigl(-\tfrac{1}{2}\bigl((j-H/2)/\sigma_x\bigr)^{2}\Bigr), \quad
+\phi_\text{slit}(j) = \tfrac{1}{2}\bigl[\mathrm{erf}\!\cdot\bigr]\quad(\text{peak } 1)
+\]
+<p>
+The 2D source image is then built as the outer product, divided by the sum of a
+<em>narrower</em> reference Gaussian on each axis — the trick used in
+<code>SimulateFIREBallemCCDImage</code> to keep the source peak proportional to
+$S_\text{tot}/(2\pi\sigma_x\sigma_\lambda)$ regardless of the PSF width:
+</p>
+\[
+\text{source}[j,i] \;=\; \dfrac{S_\text{tot}}{\Sigma_\text{narrow}} \;
+\phi_\text{spat}(j)\,\phi_\text{slit}(j)\,\phi(\lambda_i)
+\]
+<p>
+This is what makes the source visible <em>and</em> scaling correctly with the
+<strong>Source flux</strong> slider, whereas a naive Σ=1 normalisation buries
+the source under the read noise.
+</p>
+
+<h3 id="image-noise">6.3 Per-voxel noise realisation</h3>
+<p>
+Each pixel of the single-exposure image is drawn from a compound process — Poisson
+on the source + sky + dark + extra background, then EMCCD-Gamma amplification
+when $G&gt;1$ (with binary CIC), then a Gaussian read-noise term:
+</p>
+\[
+x[j,i]\;\sim\;\Gamma\!\bigl(\;\mathrm{Pois}(\lambda)+\mathrm{Bern}(\mathrm{CIC});\;G\;\bigr)\;+\;\mathcal N(0,\mathrm{RN})
+\]
+<p>
+The PRNG is a small Mulberry32 + Box-Muller + Marsaglia-Tsang Gamma combination
+written in JS — fast enough to re-render a 500×100 image at every slider tick.
+The stacked image is the analytical mean of <code>N_stack</code> independent draws,
+with RN reduced by $\sqrt{N_\text{stack}}$.
+</p>
+
+<h3 id="image-sky">6.4 Sky gated by slit</h3>
+<p>
+The sky background is light that <em>also goes through the slit</em>: it is
+multiplied by the same erf gate as the source on the spatial axis. Dark current
+and extra background, by contrast, originate at the detector and are added
+uniformly to every pixel. This was a bug in earlier versions of the port — the
+slit-gated sky is now a hard physical constraint of the simulator.
+</p>
+
+<!-- ============================================================ -->
+<h2 id="ifs">7 · IFS cube</h2>
+
+<h3 id="ifs-cube">7.1 Separable PSF × spectrum cube</h3>
+<p>
+For instruments declared as integral-field, an IFS cube of shape
+$H\times n_3\times W$ is built — $H$ along the slit, $n_3$ slicers/fibres,
+$W$ spectral bins. The number of slicers is derived from the field of view and
+the slit width:
+</p>
+\[
+n_3 \;=\; \dfrac{\sqrt{60\cdot 60\cdot \text{FOV\_size}}}{Sw}
+\quad\text{(capped at 80 for performance)}
+\]
+<p>
+The Python ETC builds the cube from the 2D detector image via
+<code>np.repeat</code>, which works only when the image is already a 3D cube.
+Here we build a <strong>physically separable</strong> cube directly:
+</p>
+\[
+\text{cube}[j,k,i] \;=\; S_\text{tot}\,\mathrm{PSF}_{2D}(j,k)\;\phi(\lambda_i)
+\;+\;F_\text{sky}\,g_\text{slit}(j) + D + B_\text{extra}
+\]
+<p>where the 2D spatial PSF is a Gaussian whose RMS in the
+<strong>slicer direction</strong> is also driven by the detector-level PSF
+(see Limitations below):</p>
+\[
+\sigma_y \;=\; \dfrac{\sqrt{\min(\sigma_x,Sl)^{2}+\sigma_\text{det}^{2}}}{p}\quad\text{[detector px]}
+\]
+\[
+\sigma_x^\text{spx} \;=\; \dfrac{\sqrt{\sigma_x^{2}+\sigma_\text{det}^{2}}}{Sw}\quad\text{[spaxel]}
+\]
+<p>Poisson + EMCCD-Gamma + CIC + RN are applied per voxel exactly as in the 2D
+image simulator.</p>
+
+<h3 id="ifs-slice">7.2 Slice &amp; integrated spectrum</h3>
+<p>
+The two top imshow show a λ-slice of the cube: the average over a few spectral
+columns around the cursor wavelength, with width set by
+<code>lambda_stack</code>:
+</p>
+\[
+\text{slice}[j,k] \;=\; \dfrac{1}{N_\lambda}\sum_{i\in W_\text{cur}}\text{cube}[j,k,i]
+\]
+<p>
+The cursor on the integrated-spectrum panel is draggable — releasing it
+re-slices the cubes live. The dashed rectangle on the stacked slice defines
+the extraction region — drag inside the box to move it, drag the NW/SE
+corners to resize. The integrated spectrum is the spatial mean over that
+region:
+</p>
+\[
+\text{spectrum}[i] \;=\; \dfrac{1}{(x_2-x_1)(y_2-y_1)}\;
+\sum_{j=y_1}^{y_2}\sum_{k=x_1}^{x_2}\text{cube}[j,k,i]
+\]
+
+<!-- ============================================================ -->
+<h2 id="limits">8 · Limitations &amp; appropriate use</h2>
+
+<p>This web port intentionally trades a few effects for portability and speed:</p>
 <ul>
-  <li><strong>Spectral resolution</strong> (R<sub>λ</sub>): λ[Å] / dλ[Å].</li>
-  <li><strong>Slit width</strong> (Sw): slit / slice / fiber width in ″.</li>
-  <li><strong>Slit length</strong> (Sl): slit / slice / fiber length in ″.</li>
-  <li><strong>Dispersion</strong> (d): Å/pix at the detector.</li>
-  <li><strong>Bandwidth</strong>: total spectrograph bandwidth in Å.</li>
-  <li><strong>IFS</strong>: convert the slit/fiber design into a slicer / fiber-IFS. The flux normally lost at the slit is transferred to neighboring fibers/slices.</li>
+  <li>EMCCD <em>smearing</em> (charge-transfer-efficiency tail) is not applied;</li>
+  <li>Cosmic-ray pixel <em>streaks</em> are not drawn (only the integrated pixel
+      loss enters $N_\text{img}$);</li>
+  <li>Slicer edge losses and slice-to-slice throughput variations of real IFUs
+      are not modelled — the cube is built from a separable PSF × spectrum;</li>
+  <li>Field-dependent effects (vignetting, distortion, PSF variation across
+      the FOV) are not modelled;</li>
+  <li>EMCCD photon-counting uses a simple analytic miscount expression; the
+      Python ETC's optimal-threshold lookup is not bundled;</li>
+  <li>The <code>pwv_kpno</code> atmospheric curve has only ground-relevant data;
+      in the deep UV the curve is identically zero — the simulator falls back to
+      flat atm so the source remains visible.</li>
 </ul>
-
-<h3>Detector</h3>
+<p>This makes the tool appropriate for:</p>
 <ul>
-  <li><strong>Quantum efficiency</strong> (QE<sub>%</sub>).</li>
-  <li><strong>Dark current</strong> (D): e-/pix/hour.</li>
-  <li><strong>Read noise</strong> (RN): e-/pix.</li>
-  <li><strong>Cosmic-ray pixel loss</strong> (CR<sub>%</sub>): fraction of pixels lost per second.</li>
-  <li><strong>Extra background</strong> (B): additional straylight in e-/pix/hour.</li>
-  <li><strong>EM gain</strong> (G): EMCCD amplification gain.</li>
-  <li><strong>CIC</strong>: clock-induced charge for EMCCDs (e-/pix).</li>
-  <li><strong>γ-Threshold</strong>: enables EMCCD photon-counting mode.</li>
+  <li>Instrument <strong>trade studies</strong> and parameter-sensitivity analysis;</li>
+  <li><strong>Comparative studies</strong> across instruments and detector technologies;</li>
+  <li><strong>Quick-look</strong> feasibility estimates and demo previews;</li>
+  <li><strong>Teaching</strong> spectrograph noise budgets and SNR scaling.</li>
 </ul>
+<p>For final observation proposals requiring high SNR accuracy (&lt;5 %),
+time-critical observations, or instruments with significant field-dependent
+effects, use an instrument-specific ETC.</p>
 
-<h2>Important features</h2>
+<!-- ============================================================ -->
+<h2 id="resources">9 · Resources</h2>
+
 <ul>
-  <li>Simplicity to add any instrument (just edit the shared spreadsheet).</li>
-  <li>Real-time computation in the browser.</li>
-  <li>Works for almost any spectrograph or spectro-imager: slit, slitless, prism, fiber IFS, slicer IFS.</li>
-  <li>Visualize the evolution of (noise, contributions, SNR, limiting surface brightness) with any parameter — for tradeoff analysis or instrument/observation/reduction optimization.</li>
-  <li>Easy instrument comparison.</li>
+  <li><a href="https://github.com/vpicouet/etc-app">vpicouet/etc-app</a> — this app's source.</li>
+  <li><a href="https://github.com/vpicouet/generic-etc">vpicouet/generic-etc</a> — original Jupyter ETC + image &amp; IFU cube simulator.</li>
+  <li><a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit">Instrument database</a> — open Google Sheet.</li>
+  <li>Picouet, V. <em>A Generic Spectrograph simulator for Exposure Time Calculations,
+      Trade Studies, and Observation Strategy Optimization</em>, in prep.</li>
+  <li>Picouet, V. et al. (2025) — EMCCD photon-counting model used here.</li>
+  <li>Harpsøe, K. et al. (2012) — EMCCD noise model.</li>
 </ul>
-
-<h2>Noise budget — formulas</h2>
-
-<h3>Sky and signal</h3>
-<p>Sky and signal contributions are first converted from
-<code>erg/cm²/s/asec²/Å</code> to <code>photons/cm²/s/sr/Å</code> (continuum unit):</p>
-<pre>CU = F / [ (h·c/λ) · (π / (180·3600))² ]</pre>
-
-<p>The wavelength dependency in the formula is explicit. Flux is expressed per Å with a
-Gaussian profile so that the user can simulate either a continuum or an unresolved line.</p>
-
-<p>Both contributions are then converted into electrons per pixel:</p>
-<pre>S [e-/pix/exp] = S<sub>CU</sub> · Sw<sub>str</sub> · d<sub>Å/pix</sub> · t<sub>exp</sub> · Atm<sub>%</sub> · A · T<sub>%</sub> · QE<sub>%</sub></pre>
-
-<h3>Other contributions</h3>
-<p>Dark current and straylight are given in e-/pix/hour:</p>
-<pre>D [e-/pix/exp] = D<sub>e-/pix/h</sub> · t<sub>exp</sub> / 3600</pre>
-<p>CIC (clock-induced charges, only relevant for EMCCDs) is already in e-/pix/exp.
-Read noise is also in e-/pix/exp.</p>
-
-<h3>Conversion to noise</h3>
-<p>Each contribution is then converted to noise by taking the square root, accounting
-for the effective number of frames and the resolution element size:</p>
-<pre>N<sub>contrib</sub> = sqrt(contrib · ENF · N<sub>images</sub> · Size<sub>res</sub>)</pre>
-<p>The effective number of frames is:</p>
-<pre>N<sub>images</sub> = (T<sub>tot,s</sub> / (t<sub>exp</sub> + t<sub>RO</sub>)) · (1 − CR<sub>%</sub>)</pre>
-<p>For electron-amplified CCDs (EMCCDs):</p>
-<ul>
-  <li>Read noise is divided by the amplification gain: <code>RN' = RN / G</code>.</li>
-  <li>An excess noise factor of √2 is used to account for the stochastic amplification (unless photon-counting / thresholding is applied).</li>
-</ul>
-
-<h2>Adding an instrument</h2>
-<p>To add a new instrument, edit the shared
-<a href="https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit?usp=sharing">Google spreadsheet</a>
-("In progress" tab). Once all characteristics are indicated, the instrument is moved to the main
-tab and immediately becomes available in this app (use the <em>Reload</em> button under
-"Data source" in the controls panel).</p>
-
-<h2>Use the original notebook (full features)</h2>
-<pre><code>conda create --name etc python=3.12
-conda activate etc
-git clone https://github.com/vpicouet/generic-etc.git
-cd generic-etc
-pip install -r requirements.txt
-open notebooks/ETC.ipynb</code></pre>
 
 <div class="footer">
-  Migrated from <a href="https://github.com/vpicouet/generic-etc">vpicouet/generic-etc</a>
-  — port of <code>Observation.py</code> → JavaScript / D3.
-  This web version covers the SNR calculator only.
+  Migrated from <a href="https://github.com/vpicouet/generic-etc">vpicouet/generic-etc</a>.
+  Plot internals (axes / curves / colormaps) are untouched by the theme; UI chrome flows
+  through CSS variables.
 </div>
 
 </main>
+</div>
+
+<!-- Theme + scrollspy + smooth-scroll -->
+<script>
+"use strict";
+function applyMode(mode){
+  if (mode!=="dark" && mode!=="light") mode = "light";
+  document.body.setAttribute("data-mode", mode);
+  try { localStorage.setItem("etc.mode", mode); } catch(e){}
+  const b = document.getElementById("theme-toggle");
+  if (b) b.textContent = (mode==="dark") ? "☀" : "🌙";
+}
+(function initTheme(){
+  let mode = "light";
+  try { mode = localStorage.getItem("etc.mode") || mode; } catch(e){}
+  applyMode(mode);
+  document.getElementById("theme-toggle").addEventListener("click", ()=>{
+    applyMode(document.body.getAttribute("data-mode")==="dark" ? "light" : "dark");
+  });
+})();
+
+// Smooth scroll for TOC clicks
+document.querySelectorAll("aside.toc a[href^='#']").forEach(a=>{
+  a.addEventListener("click", e=>{
+    const id = a.getAttribute("href").slice(1);
+    const el = document.getElementById(id);
+    if (!el) return;
+    e.preventDefault();
+    el.scrollIntoView({behavior:"smooth", block:"start"});
+    history.replaceState(null, "", "#"+id);
+  });
+});
+
+// Scrollspy: highlight the TOC entry of the section currently in view
+(function scrollspy(){
+  const links = Array.from(document.querySelectorAll("aside.toc a[href^='#']"));
+  const targets = links.map(a => ({a, el: document.getElementById(a.getAttribute("href").slice(1))}))
+                       .filter(t => t.el);
+  if (!targets.length) return;
+  const headerH = 60;
+  function onScroll(){
+    const y = window.scrollY + headerH + 16;
+    let cur = targets[0];
+    for (const t of targets){
+      if (t.el.offsetTop <= y) cur = t;
+    }
+    links.forEach(a => a.classList.remove("active"));
+    if (cur) cur.a.classList.add("active");
+  }
+  window.addEventListener("scroll", onScroll, {passive:true});
+  window.addEventListener("resize", onScroll);
+  onScroll();
+})();
+</script>
 </body>
 </html>
