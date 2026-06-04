@@ -68,12 +68,32 @@
   /* Plot */
   #status{font-size:11px;color:var(--muted);padding:2px 4px;flex:0 0 auto}
   #status.err{color:#c00}
+  .plot-area{flex:1 1 auto;min-height:0;width:100%;position:relative;display:flex;flex-direction:column}
+  .plot-area > svg, .plot-area > .img-view{display:none;flex:1 1 auto;min-height:0;width:100%}
+  .plot-area > svg.active, .plot-area > .img-view.active{display:flex}
   #plot{flex:1 1 auto;min-height:0;width:100%}
   .plot-axis text{font-size:10px;fill:#333}
   .plot-axis path,.plot-axis line{stroke:#888;shape-rendering:crispEdges}
   .legend{font-size:10.5px;fill:#222}
   .vline{stroke:#000;stroke-width:1.2;stroke-dasharray:3,3;pointer-events:none}
   .ax-title{font-size:11px;fill:#222;font-weight:600}
+
+  /* View tabs (SNR / Spectro image) */
+  .view-tabs{display:flex;gap:2px;flex:0 0 auto;margin-bottom:4px}
+  .view-tab{padding:3px 10px;font-size:11.5px;background:#ececec;border:1px solid var(--line);
+    border-bottom:none;border-radius:4px 4px 0 0;cursor:pointer;color:#444}
+  .view-tab.active{background:#fff;color:var(--text);font-weight:600}
+
+  /* Spectro image view */
+  .img-view{flex-direction:column;gap:4px;padding:2px}
+  .img-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:0 0 auto}
+  .img-cell{border:1px solid var(--line);border-radius:3px;background:#000;
+    position:relative;overflow:hidden;display:flex;flex-direction:column}
+  .img-cell .cell-title{font-size:11px;color:#fff;background:rgba(0,0,0,0.55);
+    padding:2px 6px;position:absolute;top:0;left:0;right:0;z-index:2}
+  .img-cell canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
+  .img-extra{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .img-extra > svg{width:100%;height:100%;border:1px solid var(--line);border-radius:3px;background:#fff}
 
   details.sheet{margin-top:auto;flex:0 0 auto}
   details.sheet summary{cursor:pointer;color:var(--muted);font-size:11px}
@@ -107,7 +127,23 @@
 <div class="app">
   <div id="plot-wrap">
     <div id="status">Loading instruments…</div>
-    <svg id="plot" preserveAspectRatio="none"></svg>
+    <div class="view-tabs">
+      <div class="view-tab active" data-view="snr" title="Noise budget, contributions stack, SNR stack, surface-brightness limits">SNR</div>
+      <div class="view-tab" data-view="img" title="Simulated detector image: source + sky + dark + RN + CIC (and EMCCD gamma amplification if EM_gain>1)">Spectro image</div>
+    </div>
+    <div class="plot-area">
+      <svg id="plot" class="active" preserveAspectRatio="none"></svg>
+      <div id="plot-img" class="img-view">
+        <div class="img-row">
+          <div class="img-cell"><div class="cell-title" id="img-single-title">Single exposure</div><canvas id="cv-single"></canvas></div>
+          <div class="img-cell"><div class="cell-title" id="img-stack-title">Stacked</div><canvas id="cv-stack"></canvas></div>
+        </div>
+        <div class="img-extra">
+          <svg id="svg-profiles"></svg>
+          <svg id="svg-hist"></svg>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="controls">
@@ -165,6 +201,276 @@ function calculate_photon_counting_RN_noise(RN){
 function fmtNum(v){if(!isFinite(v))return "—";return (Math.abs(v)<1e-3||Math.abs(v)>=1e4) ? v.toExponential(2) : (+v).toFixed(2)}
 function argClosest(a,v){let best=0,d=Infinity;for(let i=0;i<a.length;i++){const dd=Math.abs(a[i]-v);if(dd<d){d=dd;best=i}}return best}
 function safeLog10(v){return v>0 ? Math.log10(v) : NaN}
+
+/* ============================================================================
+   PRNG + sample distributions for the image simulator
+   ========================================================================== */
+function makeRng(seed){
+  // Mulberry32 — fast, deterministic
+  let s = (seed>>>0) || 1;
+  return function(){ s = (s + 0x6D2B79F5)>>>0; let t = s; t = Math.imul(t ^ (t>>>15), t | 1); t ^= t + Math.imul(t ^ (t>>>7), t | 61); return ((t ^ (t>>>14))>>>0) / 4294967296; };
+}
+function makeNormal(rng){
+  // Box-Muller, with cached sample
+  let spare=null;
+  return function(mu,sigma){
+    if (spare!=null){ const x=spare; spare=null; return mu + sigma*x; }
+    let u, v, s;
+    do { u = rng()*2-1; v = rng()*2-1; s = u*u+v*v; } while (s===0 || s>=1);
+    const m = Math.sqrt(-2*Math.log(s)/s);
+    spare = v*m;
+    return mu + sigma*(u*m);
+  };
+}
+function makePoisson(rng){
+  // Knuth for small λ, Gaussian approx for large λ
+  return function(lambda){
+    if (!(lambda>0)) return 0;
+    if (lambda < 30){
+      const L = Math.exp(-lambda);
+      let k=0, p=1;
+      while (true){
+        k++; p *= rng();
+        if (p <= L) return k-1;
+        if (k>2000) return k;
+      }
+    } else {
+      // Normal approx, clamp at 0
+      // Use Box-Muller inline to avoid coupling
+      let u, v, s;
+      do { u = rng()*2-1; v = rng()*2-1; s = u*u+v*v; } while (s===0 || s>=1);
+      const z = u*Math.sqrt(-2*Math.log(s)/s);
+      return Math.max(0, Math.round(lambda + Math.sqrt(lambda)*z));
+    }
+  };
+}
+function makeGamma(rng, normFn){
+  // Marsaglia & Tsang for shape k>=1; shape boost for k<1 (Ahrens-Dieter-ish)
+  // theta = scale; returns sample from Gamma(k, theta), mean = k*theta.
+  return function gamma(k, theta){
+    if (!(k>0) || !(theta>0)) return 0;
+    if (k < 1){
+      // Boost: Gamma(k) = Gamma(k+1) * U^(1/k)
+      const g = gamma(k+1, theta);
+      const u = rng();
+      return g * Math.pow(u, 1/k);
+    }
+    const d = k - 1/3, c = 1/Math.sqrt(9*d);
+    while (true){
+      let x, v;
+      do { x = normFn(0,1); v = 1 + c*x; } while (v<=0);
+      v = v*v*v;
+      const u = rng();
+      if (u < 1 - 0.0331*x*x*x*x) return d*v*theta;
+      if (Math.log(u) < 0.5*x*x + d*(1 - v + Math.log(v))) return d*v*theta;
+    }
+  };
+}
+
+/* ============================================================================
+   Image simulator — baseline Gaussian emission line (spectro) or 2D point source (imager)
+   Returns: { single:Float32Array(H*W), stack:Float32Array(H*W), W, H,
+              wavelengths (Å, length W), xPhys (Å), yPhys ("), title_single, title_stack }
+   Physics matches Observation.SimulateFIREBallemCCDImage for source="Baseline Spectra".
+   ========================================================================== */
+function gauss1d(x, x0, sigma){
+  const a = (x-x0)/sigma;
+  return Math.exp(-0.5*a*a);
+}
+function erf01(x){return 0.5*(1+erf(x))}
+
+function simulateImage(p){
+  // Use scalar parameters from STATE.values + FLAGS
+  const W = p.W || 500, H = p.H || 100;          // detector size (W = spectral, H = spatial)
+  const seed = p.seed >>> 0;
+  const rng = makeRng(seed);
+  const norm = makeNormal(rng);
+  const pois = makePoisson(rng);
+  const gam = makeGamma(rng, norm);
+
+  // Pull params
+  const wavelength = p.wavelength;                  // nm
+  const Spectral_resolution = p.Spectral_resolution;
+  const Slitwidth = p.Slitwidth, Slitlength = p.Slitlength;
+  const PSF_RMS_mask = p.PSF_RMS_mask, PSF_RMS_det = p.PSF_RMS_det;
+  const Size_source = p.Size_source, Line_width = p.Line_width;
+  const pixel_scale = p.pixel_scale, dispersion = p.dispersion;
+  const Bandwidth = p.Bandwidth;
+  const QE = p.QE, Throughput = p.Throughput, Atmosphere = p.Atmosphere;
+  const Collecting_area = p.Collecting_area;
+  const Sky = p.Sky, Signal = p.Signal_in;
+  const exposure_time = p.exposure_time, readout_time = p.readout_time, acquisition_time = p.acquisition_time;
+  const RN = p.RN, Dark_current = p.Dark_current, CIC_charge = p.CIC_charge;
+  const EM_gain = p.EM_gain, extra_background = p.extra_background;
+  const cosmic_ray_loss_per_sec = p.cosmic_ray_loss_per_sec;
+  const Throughput_FWHM = p.Throughput_FWHM; // Å
+  const spectro = !!p.spectrograph, counting_mode = !!p.counting_mode;
+
+  // ---- Reproduce key derived quantities from Observation.initilize ----
+  const fsr = 2.35, arcsec2str = Math.pow(Math.PI/180/3600, 2);
+  // PSF in spectral pixels
+  const PSF_lambda_pix = 10*wavelength/Spectral_resolution/dispersion;
+  // Spectral resolution effective (in Å)
+  const point_source_spectral_resolution = 10*wavelength/Spectral_resolution; // Å
+  const diffuse_spectral_resolution = Math.sqrt(point_source_spectral_resolution**2 + (Slitwidth*dispersion/pixel_scale)**2);
+
+  // Spatial PSF in pixels (at detector)
+  const Rx = PSF_RMS_det/pixel_scale;
+  // Source spatial sigma (in detector pixels)
+  const PSF_x = Math.sqrt(Math.min(Size_source/pixel_scale, Slitlength/pixel_scale)**2 + Rx*Rx);
+  // Source spectral sigma (in detector pixels)
+  const PSF_lam = Math.sqrt((diffuse_spectral_resolution/dispersion)**2 + (Line_width/dispersion)**2);
+
+  // Effective area
+  const effective_area = QE*Throughput*Atmosphere*(Collecting_area*100*100);
+
+  // Aperture (slit) fraction
+  let flux_fraction = 1;
+  if (spectro){
+    flux_fraction = (1 + erf(Slitlength/(2*Math.SQRT2*PSF_RMS_mask)) - 1);
+    flux_fraction *= (1 + erf(Slitwidth /(2*Math.SQRT2*PSF_RMS_mask)) - 1);
+    if (!isFinite(flux_fraction) || flux_fraction<=0) flux_fraction = 1;
+  }
+
+  // Signal: convert ergs → LU; per pix per s integrated over slit area (Slitwidth × dispersion in Å)
+  const Signal_use = Signal > 1 ? Math.pow(10, -(Signal-20.08)/2.5)*2.06e-16 : Signal;
+  const Signal_LU = convert_ergs2LU(Signal_use, wavelength);
+  // factor_CU2el: e-/s per LU per pixel (depends on mode; for the image, take per-pixel rate = effective_area · arcsec2str · Slitwidth · dispersion)
+  let factor_CU2el, factor_CU2el_sky;
+  if (spectro){
+    factor_CU2el     = effective_area * arcsec2str * Math.min(Slitwidth, Size_source) * dispersion;
+    factor_CU2el_sky = effective_area * arcsec2str * Slitwidth * dispersion;
+  } else {
+    factor_CU2el     = effective_area * pixel_scale*pixel_scale * Throughput_FWHM;
+    factor_CU2el_sky = factor_CU2el;
+  }
+  // Signal_el = e-/pix/exp at the SOURCE PEAK before profile spreading (we then multiply by normalized Gaussian)
+  const Signal_el_total = Signal_LU * factor_CU2el * exposure_time * flux_fraction;
+  // For the image, the source spreads over PSF_x × PSF_lam pixels — integrate to total e- = Signal_el_total
+  // Sky rate per pixel per exposure:
+  const Sky_LU = convert_ergs2LU(Sky, wavelength);
+  const sky_e_per_pix_per_exp = Sky_LU * factor_CU2el_sky * exposure_time;
+  const dark_per_pix_per_exp = Dark_current * exposure_time / 3600;
+  const extra_per_pix_per_exp = extra_background * exposure_time / 3600;
+
+  // N images stacked
+  const cosmic_ray_loss = Math.min(cosmic_ray_loss_per_sec*(exposure_time + readout_time/2), 1);
+  const N_images = acquisition_time*3600/(exposure_time + readout_time);
+  const N_stack = Math.max(1, Math.floor(N_images * (1-cosmic_ray_loss)));
+
+  // λ-axis (Å)
+  const wave_min = 10*wavelength - (W/2)*dispersion;
+  const wave_max = 10*wavelength + (W/2)*dispersion;
+  const wavelengths = new Float64Array(W);
+  for (let i=0;i<W;i++) wavelengths[i] = wave_min + (wave_max-wave_min)*i/(W-1);
+
+  // Throughput(λ) Gaussian shape (relative, normalised to peak)
+  // (constants used: peak=1 at wavelength*10 Å, FWHM = Throughput_FWHM Å)
+  // sigma_TH = Throughput_FWHM / 2.35
+  const thSigma = Throughput_FWHM / 2.35;
+  const throughputCurve = new Float64Array(W);
+  for (let i=0;i<W;i++) throughputCurve[i] = gauss1d(wavelengths[i], wavelength*10, thSigma);
+
+  // Atmosphere curve = constant Atmosphere (we said "no λ-dependent" — stays in scalar Atmosphere)
+  const atmCurve = new Float64Array(W); atmCurve.fill(1.0);
+
+  // Spectral profile of the emission line: Gaussian centred mid-W, sigma = PSF_lam
+  const spectralProfile = new Float64Array(W);
+  let spSum = 0;
+  for (let i=0;i<W;i++){ spectralProfile[i] = gauss1d(i, W/2, PSF_lam); spSum += spectralProfile[i]; }
+  // Apply throughput × atm
+  for (let i=0;i<W;i++) spectralProfile[i] *= throughputCurve[i]*atmCurve[i];
+  // Normalise so the integral over the spectral axis equals Signal_el_total (then it spreads spatially next)
+  if (spSum > 0) for (let i=0;i<W;i++) spectralProfile[i] *= 1/spSum;
+
+  // Spatial profile: Gaussian sigma PSF_x, centred mid-H, ×slit profile (erf gate of half-length = Slitlength/2/pixel_scale around H/2)
+  const spatialProfile = new Float64Array(H);
+  let sSum = 0;
+  for (let j=0;j<H;j++){ spatialProfile[j] = gauss1d(j, H/2, PSF_x); sSum += spatialProfile[j]; }
+  if (sSum > 0) for (let j=0;j<H;j++) spatialProfile[j] *= 1/sSum;
+
+  // Slit profile (only for spectro): erf gate
+  const slitProfile = new Float64Array(H);
+  if (spectro){
+    const length = Slitlength/2/pixel_scale; // half-length in detector pixels
+    for (let j=0;j<H;j++){
+      const dj = j - H/2;
+      const a = erf((length - dj)/(Math.SQRT2*Math.max(Rx,0.05)));
+      const b = erf((length + dj)/(Math.SQRT2*Math.max(Rx,0.05)));
+      slitProfile[j] = 0.5*(a+b);                  // ranges roughly 0..1
+    }
+    // Normalise to peak 1
+    let m = 0; for (let j=0;j<H;j++) if (slitProfile[j]>m) m=slitProfile[j];
+    if (m>0) for (let j=0;j<H;j++) slitProfile[j] /= m;
+  } else {
+    slitProfile.fill(1);
+  }
+
+  // Build the noiseless source image (e-/pix/exp)
+  const source = new Float64Array(W*H);
+  // Signal scaling so that the total integral over (W*H) ≈ Signal_el_total / num_pixels_per_unit
+  // The line is integrated over the spectral axis to Signal_el_total; we put that over the slit (Slitwidth × Slitlength) on the spatial axis.
+  // For simplicity scale spatial × slit so it integrates to 1 in the slit area.
+  let totSpat = 0;
+  for (let j=0;j<H;j++) totSpat += spatialProfile[j]*slitProfile[j];
+  if (totSpat <= 0) totSpat = 1;
+  for (let j=0;j<H;j++){
+    const spat = spatialProfile[j]*slitProfile[j]/totSpat * Signal_el_total;  // e-/exp on this row distributed along λ
+    for (let i=0;i<W;i++){
+      source[j*W + i] = spat * spectralProfile[i];
+    }
+  }
+
+  // Sky: constant per pixel per exposure (could be λ-modulated, but per-spec stays scalar)
+  const sky_rate = sky_e_per_pix_per_exp;        // e-/pix/exp
+  const dark_rate = dark_per_pix_per_exp;
+  const extra_rate = extra_per_pix_per_exp;
+
+  // ---- Build single exposure: total expected e- per pix = source + sky + dark + extra, then add Poisson + CIC + Gamma(EMCCD) + Normal(RN)
+  const single = new Float64Array(W*H);
+  const stack = new Float64Array(W*H);
+  const Wm1 = W*H;
+  for (let k=0;k<Wm1;k++){
+    const lam = source[k] + sky_rate + dark_rate + extra_rate;
+    let s = pois(lam);
+    if (EM_gain > 1){
+      // CIC binary 0/1 per pixel
+      if (rng() < CIC_charge) s += 1;
+      if (s > 0) s = gam(s, EM_gain);  // sum of s independent exponentials w mean EM_gain
+    }
+    s += norm(0, RN);
+    single[k] = s;
+  }
+
+  // ---- Build stacked image: aggregate N_stack frames analytically (sum of Poissons over stack, mean RN/sqrt(N))
+  const Nst = N_stack;
+  for (let k=0;k<Wm1;k++){
+    const lam = (source[k] + sky_rate + dark_rate + extra_rate) * Nst;
+    let s = pois(lam);
+    if (EM_gain > 1){
+      // CIC over N_stack frames as binomial
+      const cic_sum = Nst > 0 ? pois(CIC_charge * Nst) : 0;
+      if (s + cic_sum > 0){
+        s = gam(s + cic_sum, EM_gain) / Nst;     // average gain per frame
+      } else {
+        s = 0;
+      }
+    } else {
+      s = Nst > 0 ? s / Nst : 0;
+    }
+    s += norm(0, Nst>0 ? RN/Math.sqrt(Nst) : RN);
+    stack[k] = s;
+  }
+
+  return {
+    single, stack, W, H, N_stack: Nst,
+    wavelengths,
+    xPhys_per_pix: dispersion,    // Å/pix
+    yPhys_per_pix: pixel_scale,   // "/pix
+    Signal_el_total, sky_e_per_pix_per_exp, dark_per_pix_per_exp, extra_per_pix_per_exp,
+    cosmic_ray_loss, EM_gain, spectro
+  };
+}
 
 /* ============================================================================
    2. PHYSICS (port of Observation.initilize)
@@ -406,7 +712,7 @@ const GROUPS = ["Source","Strategy","Instrument","Spectrograph","Detector"];
 
 const FLAGS = { IFS:false, spectrograph:true, counting_mode:false };
 
-const STATE = { instruments:null, current_instrument:null, values:{}, xKey:"exposure_time" };
+const STATE = { instruments:null, current_instrument:null, values:{}, xKey:"exposure_time", view:"snr", imgSeed:1 };
 
 function defaultValueFor(p){ return p.log ? Math.pow(10, p.default_log) : p.default; }
 function initValuesToDefault(){ for (const [k,p] of Object.entries(PARAMS)) STATE.values[k]=defaultValueFor(p); }
@@ -723,10 +1029,189 @@ function legendBlock(g, panel, items){
 }
 
 /* ============================================================================
+   IMAGE VIEW RENDERING
+   ========================================================================== */
+// Color map (viridis-like, hardcoded LUT for speed)
+const VIRIDIS = [
+  [68,1,84],[71,24,106],[71,44,123],[68,62,135],[64,79,140],
+  [58,93,142],[51,107,143],[46,121,142],[40,135,141],[35,148,138],
+  [33,162,132],[44,176,121],[68,189,107],[101,201,87],[140,210,66],
+  [183,217,42],[222,224,27],[253,231,37]
+];
+function viridisAt(t){ // t in [0,1]
+  if (!isFinite(t)) return [0,0,0];
+  t = Math.max(0,Math.min(1,t));
+  const x = t*(VIRIDIS.length-1);
+  const i0 = Math.floor(x), i1 = Math.min(VIRIDIS.length-1, i0+1);
+  const f = x-i0;
+  const a = VIRIDIS[i0], b = VIRIDIS[i1];
+  return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
+}
+
+function rasterizeImage(canvas, data, W, H, vmin, vmax){
+  // data[j*W+i] in row-major (j = spatial / row, i = spectral / col)
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(W, H);
+  const range = (vmax - vmin) || 1;
+  for (let j=0;j<H;j++){
+    for (let i=0;i<W;i++){
+      const v = data[j*W+i];
+      const t = (v - vmin)/range;
+      const [r,g,b] = viridisAt(t);
+      const k = (j*W+i)*4;
+      img.data[k] = r; img.data[k+1] = g; img.data[k+2] = b; img.data[k+3] = 255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+}
+
+function percentile(arr, p){
+  // p in [0,1]; in-place is OK because we don't need order preserved
+  const a = Array.from(arr).filter(v=>isFinite(v)).sort((x,y)=>x-y);
+  if (!a.length) return 0;
+  const idx = Math.min(a.length-1, Math.max(0, Math.floor(p*a.length)));
+  return a[idx];
+}
+
+function drawImageView(){
+  // Build the parameter set as scalars
+  const pa = {};
+  for (const k of Object.keys(PARAMS)) pa[k] = STATE.values[k];
+  pa.Signal_in = STATE.values.Signal;
+  pa.IFS = FLAGS.IFS; pa.spectrograph = FLAGS.spectrograph; pa.counting_mode = FLAGS.counting_mode;
+  // Detector image size (kept fixed; you can change to scale with viewport)
+  pa.W = 500; pa.H = 100;
+  // Fresh realisation on each update — change seed deterministically so slider movement shows noise diversity
+  STATE.imgSeed = (STATE.imgSeed + 1) >>> 0;
+  pa.seed = STATE.imgSeed;
+
+  let sim;
+  try { sim = simulateImage(pa); }
+  catch(e){ d3.select("#status").classed("err",true).text("Image sim error: "+e.message); console.error(e); return; }
+
+  // Single + Stack canvases — auto-stretch via 1% / 99% percentiles
+  const cvS = document.getElementById("cv-single");
+  const cvK = document.getElementById("cv-stack");
+  const vminS = percentile(sim.single, 0.01), vmaxS = percentile(sim.single, 0.99);
+  const vminK = percentile(sim.stack,  0.01), vmaxK = percentile(sim.stack,  0.99);
+  rasterizeImage(cvS, sim.single, sim.W, sim.H, vminS, vmaxS);
+  rasterizeImage(cvK, sim.stack,  sim.W, sim.H, vminK, vmaxK);
+
+  document.getElementById("img-single-title").textContent =
+    `Single exposure (${sim.W}×${sim.H}, ${sim.W*sim.xPhys_per_pix|0}Å × ${(sim.H*sim.yPhys_per_pix).toFixed(1)}″)`;
+  document.getElementById("img-stack-title").textContent =
+    `Stacked (${sim.N_stack} frames, T_acq=${(STATE.values.acquisition_time).toFixed(1)}h)`;
+
+  // ===== Profiles SVG (spatial avg + spectral avg, single & stacked) =====
+  drawProfiles(sim);
+  // ===== Histogram SVG =====
+  drawHistogram(sim);
+}
+
+function drawProfiles(sim){
+  const svg = d3.select("#svg-profiles");
+  svg.selectAll("*").remove();
+  const W = svg.node().clientWidth, H = svg.node().clientHeight;
+  if (!W || !H) return;
+  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  const half = Math.floor(H/2);
+  const m = {l:38,r:8,t:16,b:18};
+
+  // spectral profile (mean over rows around centre) — top half
+  const j0 = Math.max(0, Math.floor(sim.H/2 - 5)), j1 = Math.min(sim.H, Math.floor(sim.H/2 + 5));
+  const specS = new Float64Array(sim.W), specK = new Float64Array(sim.W);
+  for (let i=0;i<sim.W;i++){
+    let aS=0, aK=0; for (let j=j0;j<j1;j++){ aS += sim.single[j*sim.W+i]; aK += sim.stack[j*sim.W+i]; }
+    specS[i] = aS/(j1-j0); specK[i] = aK/(j1-j0);
+  }
+  // spatial profile (mean over central spectral columns) — bottom half
+  const i0 = Math.max(0, Math.floor(sim.W/2 - 8)), i1 = Math.min(sim.W, Math.floor(sim.W/2 + 8));
+  const spatS = new Float64Array(sim.H), spatK = new Float64Array(sim.H);
+  for (let j=0;j<sim.H;j++){
+    let aS=0, aK=0; for (let i=i0;i<i1;i++){ aS += sim.single[j*sim.W+i]; aK += sim.stack[j*sim.W+i]; }
+    spatS[j] = aS/(i1-i0); spatK[j] = aK/(i1-i0);
+  }
+
+  function drawCurve(g, data1, data2, yOffset, hh, title, xLabel){
+    const all = Array.from(data1).concat(Array.from(data2)).filter(v=>isFinite(v));
+    const yMin = Math.min(...all), yMax = Math.max(...all);
+    const xs = d3.scaleLinear().domain([0, data1.length-1]).range([m.l, W-m.r]);
+    const ys = d3.scaleLinear().domain([yMin, yMax]).range([yOffset+hh-m.b, yOffset+m.t]);
+    g.append("g").attr("class","plot-axis").attr("transform",`translate(0,${yOffset+hh-m.b})`).call(d3.axisBottom(xs).ticks(5));
+    g.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3));
+    const line = d3.line().x((_,i)=>xs(i)).y(v=>ys(v));
+    g.append("path").datum(Array.from(data1)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",1).attr("d", line);
+    g.append("path").datum(Array.from(data2)).attr("fill","none").attr("stroke","#000").attr("stroke-width",1.6).attr("d", line);
+    g.append("text").attr("x", W-m.r-4).attr("y", yOffset+m.t+10).attr("text-anchor","end").attr("class","ax-title").text(title);
+    g.append("text").attr("x", (W+m.l-m.r)/2).attr("y", yOffset+hh-2).attr("text-anchor","middle").style("font-size","10px").style("fill","#444").text(xLabel);
+  }
+
+  drawCurve(svg, specS, specK, 0, half, "Spectral profile (single grey, stack black)", "spectral pixel");
+  drawCurve(svg, spatS, spatK, half, H-half, "Spatial profile",  "spatial pixel");
+}
+
+function drawHistogram(sim){
+  const svg = d3.select("#svg-hist");
+  svg.selectAll("*").remove();
+  const W = svg.node().clientWidth, H = svg.node().clientHeight;
+  if (!W || !H) return;
+  svg.attr("viewBox", `0 0 ${W} ${H}`);
+  const m = {l:36,r:8,t:16,b:20};
+  const nBins = 60;
+
+  // Use the union range
+  function buildHist(arr, vmin, vmax){
+    const h = new Int32Array(nBins);
+    const range = vmax - vmin || 1;
+    for (let k=0;k<arr.length;k++){
+      const v = arr[k]; if (!isFinite(v)) continue;
+      const bi = Math.max(0, Math.min(nBins-1, Math.floor((v-vmin)/range * nBins)));
+      h[bi]++;
+    }
+    return h;
+  }
+  const vmin = Math.min(percentile(sim.single, 0.01), percentile(sim.stack, 0.01));
+  const vmax = Math.max(percentile(sim.single, 0.99), percentile(sim.stack, 0.99));
+  const hS = buildHist(sim.single, vmin, vmax);
+  const hK = buildHist(sim.stack,  vmin, vmax);
+  const yMax = Math.max(d3.max(hS), d3.max(hK)) || 1;
+
+  const xs = d3.scaleLinear().domain([vmin, vmax]).range([m.l, W-m.r]);
+  const ys = d3.scaleLinear().domain([0, yMax]).range([H-m.b, m.t]);
+
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(5));
+  svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3));
+
+  function plotBars(h, color, opacity){
+    const bw = (W-m.l-m.r)/nBins;
+    for (let i=0;i<nBins;i++){
+      svg.append("rect")
+        .attr("x", m.l + i*bw).attr("y", ys(h[i]))
+        .attr("width", Math.max(1, bw-0.5))
+        .attr("height", (H-m.b) - ys(h[i]))
+        .attr("fill", color).attr("fill-opacity", opacity);
+    }
+  }
+  plotBars(hS, "#888", 0.5);
+  plotBars(hK, "#000", 0.7);
+  svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title").text("Pixel value histogram (single grey, stack black)");
+  svg.append("text").attr("x", (W+m.l-m.r)/2).attr("y", H-4).attr("text-anchor","middle").style("font-size","10px").style("fill","#444").text("Pixel value [e- or amplified e-]");
+}
+
+/* ============================================================================
    7. ORCHESTRATION
    ========================================================================== */
 let updateScheduled = false;
 function scheduleUpdate(){ if (updateScheduled) return; updateScheduled = true; requestAnimationFrame(()=>{ updateScheduled = false; doUpdate(); }); }
+
+function setView(view){
+  STATE.view = view;
+  document.querySelectorAll(".view-tab").forEach(el => el.classList.toggle("active", el.dataset.view===view));
+  document.getElementById("plot").classList.toggle("active", view==="snr");
+  document.getElementById("plot-img").classList.toggle("active", view==="img");
+  scheduleUpdate();
+}
 
 function doUpdate(){
   const xKey = STATE.xKey, p = PARAMS[xKey]; if (!p) return;
@@ -748,7 +1233,8 @@ function doUpdate(){
     .text(`Instrument: ${STATE.current_instrument||"—"}   |   x = ${xKey}   |   SNR = ${res.SNR[iCur].toFixed(2)}`);
   document.getElementById("meta").textContent = STATE.current_instrument
     ? `${STATE.current_instrument} • SNR ${res.SNR[iCur].toFixed(2)}` : "";
-  drawPlot(res);
+  if (STATE.view === "snr") drawPlot(res);
+  else drawImageView();
 }
 
 /* ============================================================================
@@ -800,6 +1286,10 @@ async function main(){
       await loadInstruments(document.getElementById("sheet_id").value, document.getElementById("sheet_name").value);
       buildInstrumentOptions(); scheduleUpdate();
     } catch (e){ d3.select("#status").classed("err",true).text("Reload failed: "+e.message); }
+  });
+  // View tab switching
+  document.querySelectorAll(".view-tab").forEach(el => {
+    el.addEventListener("click", ()=> setView(el.dataset.view));
   });
   window.addEventListener("resize", ()=>scheduleUpdate());
   scheduleUpdate();
