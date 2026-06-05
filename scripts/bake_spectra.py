@@ -61,6 +61,12 @@ def normalize(arr):
     m = float(np.nanmax(np.abs(arr)))
     return arr / m if m > 0 else arr
 
+def normalize_sky(arr):
+    """Clip negatives to 0 then normalise by max — sky emission lines are non-negative."""
+    a = np.clip(arr, 0, None)
+    m = float(np.nanmax(a))
+    return a / m if m > 0 else a
+
 def round_arr(arr, decimals=5):
     """Return a Python list with rounded floats (smaller JSON)."""
     return [float(f"{v:.{decimals}g}") for v in arr]
@@ -136,7 +142,7 @@ for src, key in [
     try:
         w_nm, f = read_two_col_csv(src)
         out = resample(w_nm, f, skygrid)
-        sky_curves[key] = round_arr(normalize(out), 4)
+        sky_curves[key] = round_arr(normalize_sky(out), 4)
         print(f"  {key:20s} {len(w_nm)} pts")
     except Exception as e:
         print(f"  {key:20s} SKIP ({e})")
@@ -239,7 +245,7 @@ if inst_root.exists():
             try:
                 w_nm, f = read_two_col_csv(p)
                 if w_nm.size >= 2:
-                    sky_per_inst[name] = round_arr(normalize(resample(w_nm, f, skygrid)), 4)
+                    sky_per_inst[name] = round_arr(normalize_sky(resample(w_nm, f, skygrid)), 4)
                     notes.append(f"sky({w_nm.size})")
             except Exception as e:
                 notes.append(f"sky ERR ({e})")

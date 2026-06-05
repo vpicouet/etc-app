@@ -450,9 +450,11 @@ function attachSubplotZoom(svgId, redrawFn){
   STATE._subplotZoomAttached[svgId] = true;
   const svg = document.getElementById(svgId); if (!svg) return;
 
-  let dragStart = null;  // x in viewBox coords where drag began
-  let dragStartClientY = null; // client Y at drag start (for Y zoom)
-  let rubberRect = null; // the selection rectangle SVG element
+  let dragStart = null;     // { clientX, clientY, vx, vy, dataX, dataY }
+  let dragAxis  = null;     // null | "x" | "y" — locked once drag exceeds threshold
+  let rubberRect = null;
+
+  const AXIS_LOCK_PX = 6;  // pixels of movement before axis is locked
 
   function clientXtoData(clientX){
     if (!STATE._lastDomain || !STATE._lastDomain[svgId]) return null;
@@ -474,7 +476,6 @@ function attachSubplotZoom(svgId, redrawFn){
     const m = ld.margin;
     const vy = (clientY - rect.top) * (vbH / rect.height);
     const [lo, hi] = ld.usedY;
-    // Y axis is typically inverted (top = hi, bottom = lo)
     const fy = Math.max(0, Math.min(1, (vy - m.t) / (vbH - m.t - m.b)));
     return hi - fy*(hi - lo);
   }
@@ -495,78 +496,94 @@ function attachSubplotZoom(svgId, redrawFn){
 
   svg.addEventListener("mousedown", function(e){
     if (e.button !== 0) return;
-    const d = clientXtoData(e.clientX);
-    if (!d) return;
-    e.preventDefault();
-    dragStart = d;
-    dragStartClientY = e.clientY;
-    // Create the rubber-band rect
     const ld = STATE._lastDomain[svgId];
-    const m = ld.margin;
+    if (!ld) return;
+    e.preventDefault();
+    const vx = clientXtoVx(e.clientX);
+    const vy = clientYtoVy(e.clientY);
+    const dX = clientXtoData(e.clientX);
+    const dY = clientYtoData(e.clientY);
+    dragStart = { clientX: e.clientX, clientY: e.clientY, vx, vy,
+                  dataX: dX ? dX.data : null, dataY: dY };
+    dragAxis = null;
+
+    // Create rubber-band rect (initially hidden)
     rubberRect = document.createElementNS("http://www.w3.org/2000/svg","rect");
-    rubberRect.setAttribute("y", m.t);
-    const vbH = svg.viewBox.baseVal.height || svg.getBoundingClientRect().height;
-    rubberRect.setAttribute("height", vbH - m.t - m.b);
-    rubberRect.setAttribute("x", d.vx);
-    rubberRect.setAttribute("width", 0);
     rubberRect.setAttribute("fill", "rgba(180,180,255,0.25)");
     rubberRect.setAttribute("stroke", "var(--accent-2,#E24A33)");
     rubberRect.setAttribute("stroke-width", "1");
     rubberRect.setAttribute("pointer-events", "none");
+    rubberRect.setAttribute("x", vx); rubberRect.setAttribute("width", 0);
+    rubberRect.setAttribute("y", vy); rubberRect.setAttribute("height", 0);
     svg.appendChild(rubberRect);
   });
 
   window.addEventListener("mousemove", function(e){
     if (!dragStart || !rubberRect) return;
-    const vx = clientXtoVx(e.clientX);
-    const x0 = Math.min(dragStart.vx, vx);
-    const x1 = Math.max(dragStart.vx, vx);
-    rubberRect.setAttribute("x", x0);
-    rubberRect.setAttribute("width", x1 - x0);
-    // Update rubber-band height for Y zoom
+    const dx = e.clientX - dragStart.clientX;
+    const dy = e.clientY - dragStart.clientY;
+
+    // Lock axis once movement exceeds threshold
+    if (!dragAxis){
+      if (Math.abs(dx) < AXIS_LOCK_PX && Math.abs(dy) < AXIS_LOCK_PX) return;
+      const ld = STATE._lastDomain[svgId];
+      const hasY = ld && ld.usedY;
+      dragAxis = (!hasY || Math.abs(dx) >= Math.abs(dy)) ? "x" : "y";
+    }
+
     const ld = STATE._lastDomain[svgId];
-    if (ld && ld.usedY){
-      const vy0 = clientYtoVy(dragStartClientY);
-      const vy1 = clientYtoVy(e.clientY);
-      const yTop = Math.min(vy0, vy1);
-      const yBot = Math.max(vy0, vy1);
-      rubberRect.setAttribute("y", yTop);
-      rubberRect.setAttribute("height", Math.max(1, yBot - yTop));
+    const m = ld.margin;
+    const vbW = svg.viewBox.baseVal.width  || svg.getBoundingClientRect().width;
+    const vbH = svg.viewBox.baseVal.height || svg.getBoundingClientRect().height;
+
+    if (dragAxis === "x"){
+      const vx = clientXtoVx(e.clientX);
+      rubberRect.setAttribute("x",      Math.min(dragStart.vx, vx));
+      rubberRect.setAttribute("width",  Math.abs(vx - dragStart.vx));
+      rubberRect.setAttribute("y",      m.t);
+      rubberRect.setAttribute("height", vbH - m.t - m.b);
+    } else {
+      const vy = clientYtoVy(e.clientY);
+      rubberRect.setAttribute("x",      m.l);
+      rubberRect.setAttribute("width",  vbW - m.l - m.r);
+      rubberRect.setAttribute("y",      Math.min(dragStart.vy, vy));
+      rubberRect.setAttribute("height", Math.abs(vy - dragStart.vy));
     }
   });
 
   window.addEventListener("mouseup", function(e){
     if (!dragStart || !rubberRect) return;
-    const d = clientXtoData(e.clientX);
     if (rubberRect.parentNode) rubberRect.parentNode.removeChild(rubberRect);
     rubberRect = null;
-    if (!d) { dragStart = null; dragStartClientY = null; return; }
-    const [nLo, nHi] = STATE._lastDomain[svgId].natural;
-    let xA = Math.min(dragStart.data, d.data);
-    let xB = Math.max(dragStart.data, d.data);
-    // Y zoom if the subplot has usedY stored
+
+    const axis  = dragAxis;
+    const start = dragStart;
+    dragStart = null; dragAxis = null;
+    if (!axis) return;  // never locked = accidental click
+
     const ld = STATE._lastDomain[svgId];
-    let yA = null, yB = null;
-    if (ld && ld.usedY && ld.naturalY){
-      const dY = clientYtoData(e.clientY);
-      const dY0 = clientYtoData(dragStartClientY);
-      if (dY !== null && dY0 !== null){
-        yA = Math.min(dY, dY0);
-        yB = Math.max(dY, dY0);
-        const [nyLo, nyHi] = ld.naturalY;
-        if (yB - yA < 0.01 * (nyHi - nyLo)){ yA = null; yB = null; }
-        else { yA = Math.max(nyLo, yA); yB = Math.min(nyHi, yB); }
-      }
+    const z  = STATE.subplotZoom[svgId] || {};
+
+    if (axis === "x"){
+      const dA = clientXtoData(e.clientX);
+      if (!dA || start.dataX === null) return;
+      const [nLo, nHi] = ld.natural;
+      let xA = Math.min(start.dataX, dA.data);
+      let xB = Math.max(start.dataX, dA.data);
+      if (xB - xA < 0.01 * (nHi - nLo)) return;
+      xA = Math.max(nLo, xA); xB = Math.min(nHi, xB);
+      STATE.subplotZoom[svgId] = { ...z, xLo: xA, xHi: xB };
+    } else {
+      const dYend   = clientYtoData(e.clientY);
+      const dYstart = start.dataY;
+      if (dYend === null || dYstart === null) return;
+      const [nyLo, nyHi] = ld.naturalY;
+      let yA = Math.min(dYend, dYstart);
+      let yB = Math.max(dYend, dYstart);
+      if (yB - yA < 0.01 * (nyHi - nyLo)) return;
+      yA = Math.max(nyLo, yA); yB = Math.min(nyHi, yB);
+      STATE.subplotZoom[svgId] = { ...z, yLo: yA, yHi: yB };
     }
-    dragStart = null; dragStartClientY = null;
-    // Ignore tiny X drags (< 1 % of range — accidental click)
-    if (xB - xA < 0.01 * (nHi - nLo)) return;
-    xA = Math.max(nLo, xA);
-    xB = Math.min(nHi, xB);
-    const z = STATE.subplotZoom[svgId] || {};
-    STATE.subplotZoom[svgId] = {xLo: xA, xHi: xB,
-      yLo: yA !== null ? yA : z.yLo,
-      yHi: yB !== null ? yB : z.yHi};
     redrawFn();
   });
 
@@ -665,6 +682,28 @@ function gaussConv1D(arr, sigma){
       s += arr[j] * wt; w += wt;
     }
     out[i] = w > 0 ? s/w : 0;
+  }
+  return out;
+}
+
+/* Separable 2D Gaussian blur on a row-major Float64Array of size H×W. */
+function gaussBlur2D(data, W, H, sigma){
+  if (sigma < 0.5) return data;
+  // Blur rows (spectral direction)
+  const tmp = new Float64Array(H * W);
+  const row = new Float64Array(W);
+  for (let j=0;j<H;j++){
+    for (let i=0;i<W;i++) row[i] = data[j*W+i];
+    const blurred = gaussConv1D(row, sigma);
+    for (let i=0;i<W;i++) tmp[j*W+i] = blurred[i];
+  }
+  // Blur columns (spatial direction)
+  const out = new Float64Array(H * W);
+  const col = new Float64Array(H);
+  for (let i=0;i<W;i++){
+    for (let j=0;j<H;j++) col[j] = tmp[j*W+i];
+    const blurred = gaussConv1D(col, sigma);
+    for (let j=0;j<H;j++) out[j*W+i] = blurred[j];
   }
   return out;
 }
@@ -818,42 +857,32 @@ function simulateImage(p){
 
   // Atmosphere curve:
   //   1. If a baked instrument-specific atm curve exists → use it.
-  //   2. Else fall back to the user-selected global curve (p.atm_kind).
-  //   3. If the resulting curve is ~0 across the detector window, use flat 1 (avoids the source disappearing in UV).
+  // Atmosphere curve — always driven by p.atm_kind (the dropdown value).
+  // The special key "instrument:KEY" means use atm_per_instrument[KEY] from the baked data.
+  // This key is injected into the dropdown by applyInstrument() when the instrument has its own curve.
   const atmCurve = new Float64Array(W);
   let atmSource = "flat";
   if (opt_atmlambda){
     let used = false;
-    // 1. instrument-specific
-    if (SPECTRA_DATA && SPECTRA_DATA.atm_per_instrument && SPECTRA_DATA.atm_per_instrument[instKey]){
-      const c = interpCurve(SPECTRA_DATA.atm_per_instrument[instKey], SPECTRA_DATA.grid, wavelengths);
-      if (c){
-        let mx = 0; for (let i=0;i<W;i++) if (c[i]>mx) mx = c[i];
-        if (mx > 0.01){
-          for (let i=0;i<W;i++) atmCurve[i] = c[i];
-          used = true; atmSource = `instrument (${instKey})`;
-        }
+    const ak = p.atm_kind || "";
+    // Instrument-specific curve (key starts with "instrument:")
+    if (!used && ak.startsWith("instrument:") && SPECTRA_DATA && SPECTRA_DATA.atm_per_instrument){
+      const iKey = ak.slice("instrument:".length);
+      const raw = SPECTRA_DATA.atm_per_instrument[iKey];
+      if (raw){
+        const c = interpCurve(raw, SPECTRA_DATA.grid, wavelengths);
+        if (c){ let mx=0; for(let i=0;i<W;i++) if(c[i]>mx) mx=c[i];
+          if(mx>0.01){ for(let i=0;i<W;i++) atmCurve[i]=c[i]; used=true; atmSource=ak; } }
       }
     }
-    // 2. global selected via dropdown
-    if (!used && SPECTRA_DATA && SPECTRA_DATA.atm && p.atm_kind && SPECTRA_DATA.atm[p.atm_kind]){
-      const c = interpCurve(SPECTRA_DATA.atm[p.atm_kind], SPECTRA_DATA.grid, wavelengths);
-      if (c){
-        let mx = 0; for (let i=0;i<W;i++) if (c[i]>mx) mx = c[i];
-        if (mx > 0.01){
-          for (let i=0;i<W;i++) atmCurve[i] = c[i];
-          used = true; atmSource = p.atm_kind;
-        } else if (typeof window !== "undefined" && window._etc_warned_atm !== true){
-          console.warn(`[etc] atm curve "${p.atm_kind}" is ~0 across [${wavelengths[0].toFixed(0)}..${wavelengths[W-1].toFixed(0)}] Å — using flat atm. Pick a different curve or toggle off.`);
-          window._etc_warned_atm = true;
-        }
-      }
+    // Global curve from dropdown
+    if (!used && SPECTRA_DATA && SPECTRA_DATA.atm && ak && SPECTRA_DATA.atm[ak]){
+      const c = interpCurve(SPECTRA_DATA.atm[ak], SPECTRA_DATA.grid, wavelengths);
+      if (c){ let mx=0; for(let i=0;i<W;i++) if(c[i]>mx) mx=c[i];
+        if(mx>0.01){ for(let i=0;i<W;i++) atmCurve[i]=c[i]; used=true; atmSource=ak; }
+        else console.warn(`[etc] atm curve "${ak}" is ~0 in this window — using flat atm.`); }
     }
-    // 3. fallback
-    if (!used){
-      atmCurve.fill(1);
-      atmSource = "flat (no curve fits window)";
-    }
+    if (!used){ atmCurve.fill(1); atmSource="flat"; }
   } else {
     atmCurve.fill(1);
   }
@@ -902,12 +931,6 @@ function simulateImage(p){
     const convolved = gaussConv1D(spectralProfile, PSF_lam);
     for (let i=0;i<W;i++) spectralProfile[i] = convolved[i];
   }
-  // Optional user smoothing (additional Gaussian blur in pixels)
-  if (p.smoothing > 0){
-    const smoothed = gaussConv1D(spectralProfile, p.smoothing);
-    for (let i=0;i<W;i++) spectralProfile[i] = smoothed[i];
-  }
-
   // Spatial profile — Gaussian, peak=1 (NOT sum=1, matches Python)
   const spatialProfile = new Float64Array(H);
   for (let j=0;j<H;j++) spatialProfile[j] = gauss1d(j, H/2, PSF_x);
@@ -969,43 +992,40 @@ function simulateImage(p){
   let skyLineMult = null;
   if (opt_skylines){
     skyLineMult = new Float64Array(W); skyLineMult.fill(1);
-    let used = false;
-    if (SPECTRA_DATA && SPECTRA_DATA.sky_lines && p.sky_kind && SPECTRA_DATA.sky_lines[p.sky_kind]){
-      // sky_lines stored on the finer sky_grid
-      const skyCurve = interpCurve(SPECTRA_DATA.sky_lines[p.sky_kind], SPECTRA_DATA.sky_grid, wavelengths);
-      if (skyCurve){
-        // Convolve mildly with the spectral PSF
-        const sigmaPix = Math.max(0.7, PSF_lam);
-        const k = Math.max(2, Math.ceil(sigmaPix*3));
-        const conv = new Float64Array(W);
-        for (let i=0;i<W;i++){
-          let s = 0, n = 0;
-          for (let d=-k; d<=k; d++){
-            const j = i+d; if (j<0||j>=W) continue;
-            const w = gauss1d(d, 0, sigmaPix);
-            s += skyCurve[j]*w; n += w;
-          }
-          conv[i] = n>0 ? s/n : 0;
-        }
-        // Normalise so the peak is "amp×" continuum
-        let pk = 0; for (let i=0;i<W;i++) if (conv[i]>pk) pk = conv[i];
-        if (pk > 0){
-          const amp = 10;
-          for (let i=0;i<W;i++) skyLineMult[i] = 1 + (amp-1)*conv[i]/pk;
-          used = true;
-        }
+    // Look up sky lines: instrument-specific catalogue first, then selected global catalogue.
+    // Priority matches Observation.py: data/Instruments/<name>/Sky_emission_lines.csv > global.
+    let rawCurve = null;
+    if (SPECTRA_DATA){
+      const instKey2 = (STATE.current_instrument || "").replace(/ /g,"_");
+      if (SPECTRA_DATA.sky_lines_per_instrument && SPECTRA_DATA.sky_lines_per_instrument[instKey2]){
+        rawCurve = interpCurve(SPECTRA_DATA.sky_lines_per_instrument[instKey2], SPECTRA_DATA.sky_grid, wavelengths);
+      } else if (SPECTRA_DATA.sky_lines && p.sky_kind && SPECTRA_DATA.sky_lines[p.sky_kind]){
+        rawCurve = interpCurve(SPECTRA_DATA.sky_lines[p.sky_kind], SPECTRA_DATA.sky_grid, wavelengths);
       }
     }
-    if (!used){
-      // Fallback: 6 random Gaussian sky lines (deterministic given seed)
-      const rngLines = makeRng(seed^0xBEEF);
-      for (let l=0;l<6;l++){
-        const i0 = Math.floor(rngLines()*W);
-        const sigma = 1.0 + rngLines()*1.5;
-        const amp = 4 + rngLines()*8;
-        for (let i=0;i<W;i++) skyLineMult[i] += (amp-1)*gauss1d(i, i0, sigma);
+    if (rawCurve){
+      // Convolve with the instrumental spectral resolution (same as Observation.py gaussian_filter1d)
+      const sigmaPix = Math.max(0.7, PSF_lam);
+      const k = Math.max(2, Math.ceil(sigmaPix * 4));
+      const conv = new Float64Array(W);
+      for (let i = 0; i < W; i++){
+        let s = 0, wt = 0;
+        for (let d = -k; d <= k; d++){
+          const j = i + d; if (j < 0 || j >= W) continue;
+          const w = gauss1d(d, 0, sigmaPix);
+          s += rawCurve[j] * w; wt += w;
+        }
+        conv[i] = wt > 0 ? s / wt : 0;
       }
+      // The baked catalogue is normalised to max=1 (non-negative). Use it as a shape multiplier:
+      // skyLineMult[i] = conv[i] preserves positions fixed — independent of the Sky slider.
+      // A pixel with conv=1 carries peak-line sky; conv=0 is pure continuum (will add 1 below in skyAt).
+      // We add 1 so the continuum base is preserved: skyAt(col) = sky_rate * (1 + conv[col])
+      // i.e. at a strong line the sky is 2× continuum, at conv=0 it equals continuum.
+      for (let i = 0; i < W; i++) skyLineMult[i] = 1 + conv[i];
     }
+    // No fallback to random lines — if no catalogue covers the wavelength range, skyLineMult stays 1
+    // (flat continuum) which is physically correct.
   }
 
   // sky multiplier value at a column
@@ -1078,7 +1098,9 @@ function simulateImage(p){
     // Which curve was actually used (for the optics panel legend)
     sourceInfo_throughput, sourceInfo_atm,
     // Diagnostics
-    spectralProfile, spatialProfile
+    spectralProfile, spatialProfile,
+    // Noiseless source image (e-/pix/exp) — used by IFS cube builder to preserve correct amplitude
+    source
   };
 }
 
@@ -1451,6 +1473,35 @@ function applyInstrument(name){
   IFS_STATE.lambda_center = null; // reset λ cursor → defaults to central detector λ next render
   updateIfsTabVisibility();
   document.body.setAttribute("data-spectro", FLAGS.spectrograph ? "true" : "false");
+  // UV instruments default to UV_atm_lines sky catalogue
+  const isUV = /FIREBall|GALEX|UVEX|SCWI/i.test(name);
+  if (isUV && SPECTRA_DATA && SPECTRA_DATA.sky_lines && SPECTRA_DATA.sky_lines["UV_atm_lines"]){
+    IMG_FLAGS.sky_kind = "UV_atm_lines";
+    const el = document.getElementById("img-sky-kind");
+    if (el) el.value = "UV_atm_lines";
+  }
+
+  // Inject instrument-specific atm curve into the dropdown (or remove it if absent)
+  const instKey2 = name.replace(/ /g,"_");
+  const atmEl = document.getElementById("img-atm-kind");
+  const instAtmKey = `instrument:${instKey2}`;
+  if (atmEl){
+    // Remove any previously injected instrument option
+    const prev = atmEl.querySelector("option[data-inst]");
+    if (prev) prev.remove();
+    if (SPECTRA_DATA && SPECTRA_DATA.atm_per_instrument && SPECTRA_DATA.atm_per_instrument[instKey2]){
+      // Prepend the instrument-specific option and select it
+      const opt = document.createElement("option");
+      opt.value = instAtmKey;
+      opt.textContent = `${instKey2} (instrument)`;
+      opt.dataset.inst = "1";
+      atmEl.insertBefore(opt, atmEl.firstChild);
+      atmEl.value = instAtmKey;
+      IMG_FLAGS.atm_kind = instAtmKey;
+    } else {
+      // No instrument curve — fall back to whatever is currently selected (keep user's choice)
+    }
+  }
 }
 
 /* ============================================================================
@@ -1557,14 +1608,19 @@ function buildImageOptionsUI(){
     v => IMG_FLAGS.sky_kind = v,
     "Sky emission line catalogue (only used when \"Sky emission lines\" is enabled).");
 
-  // Smoothing selector
+  // Smoothing slider — applied to rendered images directly (no re-simulation needed)
   const smRow = wrap.append("div").style("display","flex").style("align-items","center").style("gap","6px").style("font-size","11.5px").style("margin-bottom","4px");
   smRow.append("span").style("color","var(--muted)").text("Smooth (px)");
-  const smSel = smRow.append("select").style("font","12px var(--font-ui)").style("padding","2px 4px")
-    .style("border","1px solid var(--line-strong)").style("border-radius","3px")
-    .style("background","var(--panel)").style("color","var(--text)");
-  [0,1,2,3].forEach(v => smSel.append("option").attr("value",v).property("selected", IMG_FLAGS.smoothing===v).text(v===0?"none":`${v} px`));
-  smSel.on("change", function(){ IMG_FLAGS.smoothing = +this.value; scheduleUpdate(); });
+  const smLabel = smRow.append("span").style("min-width","32px").style("color","var(--text)").text(IMG_FLAGS.smoothing === 0 ? "off" : `${IMG_FLAGS.smoothing} px`);
+  smRow.append("input").attr("type","range").attr("min",0).attr("max",8).attr("step",0.5)
+    .style("width","90px").property("value", IMG_FLAGS.smoothing)
+    .on("input", function(){
+      IMG_FLAGS.smoothing = +this.value;
+      smLabel.text(IMG_FLAGS.smoothing === 0 ? "off" : `${IMG_FLAGS.smoothing} px`);
+      // Re-render all canvases and curves without re-simulating
+      ["single","stack","ifs_single","ifs_stack"].forEach(w => applyColorScale(w));
+      scheduleUpdate();
+    });
 
   // Toggles
   function tog(id, label, key, tip){
@@ -1758,7 +1814,9 @@ function drawPlot(res){
                 : (snrMode === "per Source" || snrMode === "per Source per 2λpix") ? "per source"
                 : "per res elem";
   const sbVal   = sbArr[iCur];
-  const snrTitle = `SNR ${res.SNR[iCur].toFixed(2)} (max ${d3.max(res.SNR).toFixed(2)})\nSB(5σ,${sbLabel}) ${isFinite(sbVal)?sbVal.toFixed(2):"—"} log[erg/cm²/s/asec²]`;
+  const snrCur = isFinite(res.SNR[iCur]) ? res.SNR[iCur] : NaN;
+  const snrMax = d3.max(res.SNR.filter(isFinite));
+  const snrTitle = `SNR ${isFinite(snrCur)?snrCur.toFixed(2):"—"} (max ${snrMax!=null?snrMax.toFixed(2):"—"})\nSB(5σ,${sbLabel}) ${isFinite(sbVal)?sbVal.toFixed(2):"—"} log[erg/cm²/s/asec²]`;
   drawStackPanel(svg, p2, x, xScale, snrStack, max2, ylog, "SNR contributions", iCur,
     NAMES.map((n,j)=>({name:n, color:COLORS[j]})), (j)=>{
       const Tn = res.Total_noise_final[iCur];
@@ -2124,7 +2182,6 @@ function drawImageView(){
   pa.spectrum  = IMG_FLAGS.spectrum;
   pa.atm_kind  = IMG_FLAGS.atm_kind;
   pa.sky_kind  = IMG_FLAGS.sky_kind;
-  pa.smoothing = IMG_FLAGS.smoothing || 0;
   pa.Redshift  = STATE.values.Redshift || 0;
   // Detector image size (kept fixed; you can change to scale with viewport)
   pa.W = 500; pa.H = 100;
@@ -2189,7 +2246,9 @@ function applyColorScale(which){
   }[which];
   const dataKey = isIfs ? (which === "ifs_single" ? "single" : "stack") : which;
   const cv = document.getElementById(cvId);
-  const data = c[dataKey];
+  const rawData = c[dataKey];
+  const sigma = (IMG_FLAGS.smoothing || 0) / 2.355;  // FWHM → sigma
+  const data = sigma >= 0.5 ? gaussBlur2D(rawData, c.W, c.H, sigma) : rawData;
   const cm = STATE.imgCM[which];
   const v0 = c.vmin0[dataKey], v1 = c.vmax0[dataKey];
   const half = (v1 - v0) / 2;
@@ -2474,6 +2533,13 @@ function svgCellSize(svgNode){
   return { W, H };
 }
 
+/* Smooth a typed array with the current IMG_FLAGS.smoothing FWHM (same pixel scale as imshow). */
+function smoothCurve(arr){
+  const sigma = (IMG_FLAGS.smoothing || 0) / 2.355;
+  if (sigma < 0.5) return arr;
+  return gaussConv1D(arr instanceof Float64Array ? arr : new Float64Array(arr), sigma);
+}
+
 /* Draw a single-line+stack curve on its own SVG, with x-axis using `xValues`.
    viewBox is set to the SVG's actual rendered pixel size to avoid scaling glitches. */
 function drawCurveSvg(svgId, single, stack, xValues, title, xLabel, redrawFn){
@@ -2483,6 +2549,10 @@ function drawCurveSvg(svgId, single, stack, xValues, title, xLabel, redrawFn){
   const W = sz.W, H = sz.H;
   svg.attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio","none");
   const m = {l:38,r:8,t:16,b:22};
+
+  // Apply smoothing before computing domains or drawing
+  const singleS = smoothCurve(single);
+  const stackS  = smoothCurve(stack);
 
   // Natural domain = full xValues range; zoomed domain overrides if user scrolled
   const xNatLo = xValues[0], xNatHi = xValues[xValues.length-1];
@@ -2494,8 +2564,8 @@ function drawCurveSvg(svgId, single, stack, xValues, title, xLabel, redrawFn){
   // Y range computed only over the visible window for autoscale
   let yMin = Infinity, yMax = -Infinity;
   for (let i=iLo;i<=iHi;i++){
-    if (isFinite(single[i])){ if (single[i]<yMin) yMin=single[i]; if (single[i]>yMax) yMax=single[i]; }
-    if (isFinite(stack[i])){  if (stack[i]<yMin)  yMin=stack[i];  if (stack[i]>yMax)  yMax=stack[i]; }
+    if (isFinite(singleS[i])){ if (singleS[i]<yMin) yMin=singleS[i]; if (singleS[i]>yMax) yMax=singleS[i]; }
+    if (isFinite(stackS[i])){  if (stackS[i]<yMin)  yMin=stackS[i];  if (stackS[i]>yMax)  yMax=stackS[i]; }
   }
   if (!isFinite(yMin)){ yMin = 0; yMax = 1; }
   const yNatLo = yMin, yNatHi = yMax;
@@ -2507,8 +2577,8 @@ function drawCurveSvg(svgId, single, stack, xValues, title, xLabel, redrawFn){
   const line = d3.line()
     .defined((_,i)=> xValues[i] >= xLo && xValues[i] <= xHi)
     .x((_,i)=>xs(xValues[i])).y(v=>ys(v));
-  svg.append("path").datum(Array.from(single)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",3.0).attr("d", line);
-  svg.append("path").datum(Array.from(stack)).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",3.2).attr("d", line);
+  svg.append("path").datum(Array.from(singleS)).attr("fill","none").attr("stroke","#888").attr("stroke-opacity",0.5).attr("stroke-width",3.0).attr("d", line);
+  svg.append("path").datum(Array.from(stackS)).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",3.2).attr("d", line);
   svg.append("text").attr("x", W-m.r-4).attr("y", m.t+10).attr("text-anchor","end").attr("class","ax-title").text(title);
   // x-label sits just ABOVE the axis on the right (between curves and the axis line)
   svg.append("text").attr("x", W-m.r-4).attr("y", H-m.b-4).attr("text-anchor","end")
@@ -2565,12 +2635,12 @@ function drawOptics(sim, pa){
   svg.append("path").datum(Array.from(sim.atmCurve))
     .attr("fill","none").attr("stroke","#E24A33").attr("stroke-width",3.0)
     .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
-  // Sky lines (orange) — normalised to peak
+  // Sky lines (orange) — subtract the continuum baseline (1) then normalise to peak for display
   if (sim.skyLineMult){
     let pk = 0;
-    for (let i=0;i<sim.W;i++) if (sim.skyLineMult[i]>pk) pk = sim.skyLineMult[i];
+    for (let i=0;i<sim.W;i++){ const v = sim.skyLineMult[i]-1; if (v>pk) pk = v; }
     if (pk > 0){
-      svg.append("path").datum(Array.from(sim.skyLineMult).map(v => v/pk))
+      svg.append("path").datum(Array.from(sim.skyLineMult).map(v => (v-1)/pk))
         .attr("fill","none").attr("stroke","#FBC15E").attr("stroke-width",2.5)
         .attr("d", d3.line().x((_,i)=>xs(sim.wavelengths[i])).y(v=>ys(v)));
     }
@@ -2699,12 +2769,15 @@ const IFS_STATE = {
   lambda_center: null    // Å — null = use middle of the detector spectral range
 };
 
-/* Build a proper IFS cube from a SEPARABLE source model:
-     source[j, k, i] = signal_total · psf2D[j, k] · spectralProfile[i]
-   where psf2D is a 2D Gaussian on (j ∈ [0,H), k ∈ [0,n3)).
-   Background (sky + dark + extra) is added uniformly inside the slit FOV.
-   Poisson + EMCCD Gamma + Normal RN noise is applied per voxel.
-   `stack=true` divides by Nst (mean-of-N) after Poisson(λ × Nst). */
+/* Build an IFS cube matching Python's approach:
+   - The noiseless source signal per voxel (j, i, k) = sim.source[j,i] * spatPsf1D[k]
+     where spatPsf1D is a 1D Gaussian in the spaxel direction (sum-normalised to 1).
+     This ensures Σ_k cube_source[j,i,k] = sim.source[j,i], i.e. total signal in any
+     (j,i) column = same as the 2D detector image — matching Python's np.repeat approach
+     while adding physically correct spaxel-direction PSF structure.
+   - Background (sky + dark + extra) is added uniformly per voxel.
+   - Poisson + EMCCD + RN noise applied per voxel.
+   `stack=true` divides by Nst after Poisson(λ × Nst). */
 function buildIfsCubeFromModel(sim, pa, n3, seed, stack){
   const H = sim.H, W = sim.W;
   const cube = new Float64Array(H * W * n3);
@@ -2713,62 +2786,40 @@ function buildIfsCubeFromModel(sim, pa, n3, seed, stack){
   const pois = makePoisson(rng);
   const gam  = makeGamma(rng, norm);
 
-  // Source signal (total e- per exposure across the integrated source) and per-pixel rates
-  const signalTotal = sim.Signal_el_total;
-  const skyRate    = sim.sky_e_per_pix_per_exp;   // e-/pix/exp continuum (inside slit only)
-  const darkRate   = sim.dark_per_pix_per_exp;
-  const extraRate  = sim.extra_per_pix_per_exp;
+  const skyRate   = sim.sky_e_per_pix_per_exp;
+  const darkRate  = sim.dark_per_pix_per_exp;
+  const extraRate = sim.extra_per_pix_per_exp;
   const EM_gain   = pa.EM_gain;
   const CIC       = pa.CIC_charge;
   const RN        = pa.RN;
   const Nst       = Math.max(1, sim.N_stack);
 
-  // Spectral profile (normalised so Σ = 1)
-  const spec = sim.spectralProfile;
-  let specSum = 0; for (let i=0;i<W;i++) specSum += (spec[i] > 0 ? spec[i] : 0);
-  if (specSum <= 0) specSum = 1;
-
-  // 2D spatial PSF on the IFS cube. After IFS re-imagery the detector-level PSF (PSF_RMS_det) dominates
-  // BOTH spatial axes (the slicer just samples the focal plane), so we use it on Y and on X. PSF_RMS_mask
-  // is used elsewhere (slit flux losses, spectral resolution degradation) but not here.
-  //   sigma_y_px  = sqrt(min(Size_source, Slitlength)^2 + PSF_RMS_det^2) / pixel_scale   (detector pixels)
-  //   sigma_x_spx = sqrt(Size_source^2 + PSF_RMS_det^2) / Slitwidth                     (spaxels)
-  // All sigmas are arcsec (no 2.35 factor).
-  const Size_eff_y = Math.min(pa.Size_source, pa.Slitlength);
-  const sigma_y_px  = Math.max(0.3, Math.sqrt(Size_eff_y*Size_eff_y + pa.PSF_RMS_det*pa.PSF_RMS_det) / pa.pixel_scale);
+  // 1D spaxel-direction PSF (sum-normalised so Σ_k = 1)
   const sigma_x_spx = Math.max(0.3, Math.sqrt(pa.Size_source*pa.Size_source + pa.PSF_RMS_det*pa.PSF_RMS_det) / Math.max(0.001, pa.Slitwidth));
-  const cy = H/2, cx = n3/2;
-
-  // Precompute 2D spatial PSF, normalised so Σ_jk psf2D = 1
-  const psf2D = new Float64Array(H * n3);
+  const cx = n3 / 2;
+  const spatPsf1D = new Float64Array(n3);
   let psfSum = 0;
-  for (let j=0;j<H;j++){
-    const dy = (j - cy)/sigma_y_px;
-    const gy = Math.exp(-0.5*dy*dy);
-    for (let k=0;k<n3;k++){
-      const dx = (k - cx)/sigma_x_spx;
-      const v = gy * Math.exp(-0.5*dx*dx);
-      psf2D[j*n3 + k] = v;
-      psfSum += v;
-    }
+  for (let k=0;k<n3;k++){
+    const dx = (k - cx) / sigma_x_spx;
+    spatPsf1D[k] = Math.exp(-0.5*dx*dx);
+    psfSum += spatPsf1D[k];
   }
-  if (psfSum > 0) for (let kk=0; kk<psf2D.length; kk++) psf2D[kk] /= psfSum;
+  if (psfSum > 0) for (let k=0;k<n3;k++) spatPsf1D[k] /= psfSum;
 
-  // Slit / FOV mask on (j, k):  the slit covers Slitlength/pixel_scale pixels along H and the full n3 along the slicer axis.
-  // Outside the slit (along H), no sky is present (the IFS feeds the slicer with the field; the slit edge cuts the FOV).
+  // Slit mask for sky gating
   const slitLen_px = pa.Slitlength / pa.pixel_scale;
   const jSlitLo = Math.max(0, Math.floor(H/2 - slitLen_px/2));
   const jSlitHi = Math.min(H, Math.ceil(H/2 + slitLen_px/2));
 
-  // Fill the cube
+  // Fill the cube — source amplitude from sim.source (noiseless 2D image, e-/pix/exp)
   for (let j=0;j<H;j++){
     const inSlit = (j >= jSlitLo && j < jSlitHi);
     for (let k=0;k<n3;k++){
-      const sp = psf2D[j*n3 + k];
+      const sp = spatPsf1D[k];
       // Background per voxel per exposure (sky gated by slit; dark+extra everywhere)
       const bg = (inSlit ? skyRate : 0) + darkRate + extraRate;
       for (let i=0;i<W;i++){
-        const sourceRate = signalTotal * sp * Math.max(0, spec[i]) / specSum;
+        const sourceRate = Math.max(0, sim.source[j*W + i]) * sp;
         // λ-dependent voxel rate
         const lam = (stack ? (sourceRate + bg)*Nst : sourceRate + bg);
         let s = pois(lam);
@@ -2809,7 +2860,8 @@ function ifsSlice(cube, H, W, n3, colLo, colHi){
   return out;
 }
 
-/* Integrated spectrum: mean over a (x1..x2 in n3, y1..y2 in H) box, returns Float64Array(W). */
+/* Integrated spectrum: mean over a (x1..x2 in n3, y1..y2 in H) box, returns Float64Array(W).
+   Mean (not sum) matches Python's np.nanmean(ifs_cube[y1:y2, :, x1:x2], axis=(0,2)). */
 function ifsIntegratedSpectrum(cube, H, W, n3, x1, x2, y1, y2){
   x1 = Math.max(0, Math.floor(x1)); x2 = Math.min(n3, Math.ceil(x2));
   y1 = Math.max(0, Math.floor(y1)); y2 = Math.min(H, Math.ceil(y2));
@@ -2824,7 +2876,7 @@ function ifsIntegratedSpectrum(cube, H, W, n3, x1, x2, y1, y2){
         s += cube[(j*W + i)*n3 + k];
       }
     }
-    out[i] = s/denom;
+    out[i] = s / denom;
   }
   return out;
 }
@@ -2839,7 +2891,6 @@ function drawIfsView(){
   pa.atmlambda = IMG_FLAGS.atmlambda; pa.QElambda = IMG_FLAGS.QElambda;
   pa.sky_lines = IMG_FLAGS.sky_lines; pa.source_im = IMG_FLAGS.source_im;
   pa.spectrum = IMG_FLAGS.spectrum; pa.atm_kind = IMG_FLAGS.atm_kind; pa.sky_kind = IMG_FLAGS.sky_kind;
-  pa.smoothing = IMG_FLAGS.smoothing || 0;
   pa.Redshift = STATE.values.Redshift || 0;
   pa.W = 500; pa.H = 100;
   STATE.imgSeed = (STATE.imgSeed + 1) >>> 0;
@@ -2924,8 +2975,9 @@ function drawIfsRect(){
     .attr("class", "ifs-rect")
     .attr("x", r.x1).attr("y", r.y1)
     .attr("width", r.x2 - r.x1).attr("height", r.y2 - r.y1)
-    .attr("fill", "none").attr("stroke", "#000")
-    .attr("stroke-width", Math.max(0.6, IFS_STATE.H*0.012))
+    .attr("fill", "none").attr("stroke", "#e44")
+    .attr("stroke-width", 1.5)
+    .attr("vector-effect", "non-scaling-stroke")
     .style("pointer-events", "stroke");
 }
 
@@ -2939,8 +2991,8 @@ function drawIfsSpectrum(){
 
   const r = IFS_STATE.rect;
   if (!r || !IFS_STATE.cube) return;
-  const specSingle = ifsIntegratedSpectrum(IFS_STATE.cube,       IFS_STATE.H, IFS_STATE.W, IFS_STATE.n3, r.x1, r.x2, r.y1, r.y2);
-  const specStack  = ifsIntegratedSpectrum(IFS_STATE.cube_stack, IFS_STATE.H, IFS_STATE.W, IFS_STATE.n3, r.x1, r.x2, r.y1, r.y2);
+  const specSingle = smoothCurve(ifsIntegratedSpectrum(IFS_STATE.cube,       IFS_STATE.H, IFS_STATE.W, IFS_STATE.n3, r.x1, r.x2, r.y1, r.y2));
+  const specStack  = smoothCurve(ifsIntegratedSpectrum(IFS_STATE.cube_stack, IFS_STATE.H, IFS_STATE.W, IFS_STATE.n3, r.x1, r.x2, r.y1, r.y2));
 
   const xValues = IFS_STATE.wavelengths;
   const xNatLo = xValues[0], xNatHi = xValues[xValues.length-1];
@@ -2953,9 +3005,12 @@ function drawIfsSpectrum(){
     if (isFinite(specStack[i])){  if (specStack[i]<yMin)  yMin=specStack[i];  if (specStack[i]>yMax)  yMax=specStack[i]; }
   }
   if (!isFinite(yMin)){ yMin = 0; yMax = 1; }
+  const yNatLo = yMin, yNatHi = yMax;
+  const [yLo, yHi] = getZoomDomainY("svg-ifs-spec", yNatLo, yNatHi);
   const xs = d3.scaleLinear().domain([xLo, xHi]).range([m.l, W-m.r]);
-  const ys = d3.scaleLinear().domain([yMin, yMax]).range([H-m.b, m.t]);
-  STATE._lastDomain["svg-ifs-spec"] = { used:[xLo, xHi], natural:[xNatLo, xNatHi], margin: m };
+  const ys = d3.scaleLinear().domain([yLo, yHi]).range([H-m.b, m.t]);
+  STATE._lastDomain["svg-ifs-spec"] = { used:[xLo, xHi], natural:[xNatLo, xNatHi], margin: m,
+    usedY:[yLo, yHi], naturalY:[yNatLo, yNatHi] };
   attachSubplotZoom("svg-ifs-spec", ()=> drawIfsSpectrum());
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(xs).ticks(4).tickFormat(d3.format(".3~g")));
   svg.append("g").attr("class","plot-axis").attr("transform",`translate(${m.l},0)`).call(d3.axisLeft(ys).ticks(3).tickFormat(d3.format(".2~g")));
@@ -3239,10 +3294,11 @@ function doUpdate(){
   try { res = computeObservation(pa); }
   catch(e){ d3.select("#status").classed("err",true).text("Compute error: "+e.message); console.error(e); return; }
   const iCur = argClosest(xArr, STATE.values[xKey]);
+  const snrCurStatus = isFinite(res.SNR[iCur]) ? res.SNR[iCur].toFixed(2) : "—";
   d3.select("#status").classed("err",false)
-    .text(`Instrument: ${STATE.current_instrument||"—"}   |   x = ${xKey}   |   SNR = ${res.SNR[iCur].toFixed(2)}`);
+    .text(`Instrument: ${STATE.current_instrument||"—"}   |   x = ${xKey}   |   SNR = ${snrCurStatus}`);
   document.getElementById("meta").textContent = STATE.current_instrument
-    ? `${STATE.current_instrument} • SNR ${res.SNR[iCur].toFixed(2)}` : "";
+    ? `${STATE.current_instrument} • SNR ${snrCurStatus}` : "";
   if (STATE.view === "snr") { drawPlot(res); attachSnrXDrag(); }
   else if (STATE.view === "ifs") { drawIfsView(); attachIfsRectDrag(); attachIfsLambdaDrag(); }
   else drawImageView();

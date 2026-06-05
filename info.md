@@ -6,12 +6,7 @@
 
 The instrument database is shared with the Python ETC and lives in a [Google Sheet](https://docs.google.com/spreadsheets/d/1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU/edit). The application loads it through the public `gviz/tq` CSV endpoint, so adding a new spectrograph configuration in the sheet makes it immediately available in the app without any code change.
 
-> **Scope.** This is the *SNR + image simulator* half of the original notebook, with a few simplifications:
-> - Source SEDs, atmosphere curves and sky-line catalogues are **baked** into `data/spectra.js` at build time on a common wavelength grid;
-> - The EMCCD photon-counting threshold optimisation (the `interpolate_optimal_threshold` lookup of the Python code) is replaced by a simpler analytic miscount model — see [§5.5](#snr-emccd);
-> - Smearing, cosmic-ray streaks and the full IFU pipeline (slicer edge losses, slice-to-slice throughput variations) are not modelled.
->
-> Accuracy is sufficient for trade studies, design exploration, instrument comparison and teaching. For final observation preparation an instrument-specific ETC should be used when available.
+Accuracy is sufficient for trade studies, design exploration, instrument comparison and teaching. For final observation preparation an instrument-specific ETC should be used when available.
 
 ![SNR view with parameter panel](images/full_screen_tab1_and_params.jpg)
 
@@ -21,7 +16,7 @@ The instrument database is shared with the Python ETC and lives in a [Google She
 
 1. Pick an instrument in the **Instrument** dropdown of the top bar. The accordions below are populated automatically.
 2. Pick the parameter you want to vary in **X axis**. Equivalently, click on a parameter *label* in an accordion (the active x-axis is highlighted in orange).
-3. Pick an integration mode in **SNR** (per pixel, per resolution element, per source, or per source × 2 spectral pixels — see [§5.2](#snr-modes)).
+3. Pick an integration mode in **SNR** (per pixel, per resolution element, or per source — see [§5.2](#snr-modes)).
 4. The four SNR panels render in real time. **Drag the vertical dashed line** horizontally to set the current value of the swept parameter — the slider on the right syncs.
 5. Switch to **Spectro image** to see a simulated detector frame (single exposure and stack of `N_images_true` frames). Right-click + drag (or ctrl-click + drag on a Mac trackpad) on either image to bias/contrast the colormap, DS9-style. Double-click resets.
 6. For instruments declared as integral-field (`dimensions=3` in the sheet), an **IFS** view appears with two cube λ-slices and a draggable extraction box.
@@ -34,12 +29,11 @@ The viewport is split into two columns. The left column hosts the plot area with
 
 ### 3.2 SNR view {#ui-snr}
 
-Four stacked sub-panels share the same x-axis (Figure 1):
+Three stacked sub-panels share the same x-axis (Figure 1):
 
 1. **Noise budget** — noise contributions (signal, dark, sky, read noise, CIC, extra background) and their quadratic sum.
 2. **Contribution stack** — average electron counts per pixel (or per resolution element / per source, depending on the SNR mode) stacked on top of each other.
-3. **SNR contribution stack** — the same components rescaled so the stack sums to the total SNR. Useful to identify which noise source drives the SNR at any point of the parameter sweep.
-4. **Surface-brightness limit** — SNR = 5 limiting surface brightness per pixel, per resolution element and per source, in `log₁₀(erg/cm²/s/asec²)`.
+3. **SNR contribution stack** — the same components rescaled so the stack sums to the total SNR. Useful to identify which noise source drives the SNR at any point of the parameter sweep. The Surface-brightness limit (SNR = 5) is added in the legend.
 
 Each panel has its own legend overlaid in the top-right corner. Hovering over a panel shows a tooltip with the value of every series at the cursor's x position. The vertical dashed cursor at the current parameter value is draggable; releasing it updates the corresponding slider and re-renders.
 
