@@ -82,6 +82,10 @@
   .ctl .check-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--text-soft)}
   .ctl .check-row input[type=checkbox]{margin:0}
   .ctl-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:2px;font-weight:600}
+  .preset-row{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin-top:5px}
+  .preset-label{font-size:10px;color:var(--muted);white-space:nowrap}
+  .preset-btn{font-size:10.5px;padding:2px 6px;border-radius:3px;border:1px solid var(--line);background:var(--panel);color:var(--text-soft);cursor:pointer;white-space:nowrap}
+  .preset-btn:hover{border-color:var(--accent);color:var(--accent)}
 
   /* Pickers — vertical, inside sidebar */
   .picker-panel{padding:8px 10px;flex-direction:column;gap:6px;overflow:auto;min-height:0}
@@ -185,6 +189,13 @@
         <label><input type="checkbox" id="sc-ylog" checked> y-log</label>
         <label><input type="checkbox" id="sc-names" checked> names</label>
       </div>
+      <div class="preset-row">
+        <span class="preset-label">Presets:</span>
+        <button class="preset-btn" data-x="PSF_RMS_det"    data-y="Spectral_resolution" data-s="Effective_area" data-c="wavelength">Resolution</button>
+        <button class="preset-btn" data-x="wavelength"     data-y="Effective_area"       data-s="Collecting_area" data-c="Spectral_resolution">Wave/Area</button>
+        <button class="preset-btn" data-x="FOV_size"       data-y="Effective_area"       data-s="Collecting_area" data-c="wavelength">FOV/Area</button>
+        <button class="preset-btn" data-x="wavelength"     data-y="Grasp"                data-s="Effective_area"  data-c="Spectral_resolution">Wave/Grasp</button>
+      </div>
     </div>
     <div class="panel picker-panel">
       <div class="picker-group">
@@ -260,17 +271,13 @@ function hideTip(){ tip.style.display = "none"; }
    ========================================================================== */
 const SHEET_ID   = "1Ox0uxEm2TfgzYA6ivkTpU4xrmN5vO5kmnUPdCSt73uU";
 const SHEET_NAME = "instruments.csv";
+const DET_SHEET  = "Configs";
 
 const INSTR = [];
+const DETECTORS = [];  // populated by loadDetectors()
 
-// Detectors block — values mirror the right-hand block of the comparison sheet.
-const DETECTORS = [
-  { name:"EMCCD201",     Efficiency:0.4091, background:0.7, Noise_per_exp:null, pix_size:13, QE:0.7 },
-  { name:"EMCCD311",     Efficiency:null,   background:null, Noise_per_exp:null, pix_size:null, QE:null },
-  { name:"Good skipper", Efficiency:null,   background:null, Noise_per_exp:null, pix_size:null, QE:null },
-  { name:"Skipper",      Efficiency:0.3514, background:0.7, Noise_per_exp:null, pix_size:15, QE:0.7 },
-  { name:"Perfect",      Efficiency:1.0,    background:0.0, Noise_per_exp:null, pix_size:10, QE:0.9 }
-];
+// Keys used by the detector radar — must match row[0] in the Configs sheet
+const DET_KEYS = ["exposure_time","pixel_size","readout_time","RN","Dark_current","QE","CIC_charge","EM_gain"];
 
 async function loadInstruments(){
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(SHEET_NAME)}`;
@@ -296,6 +303,40 @@ async function loadInstruments(){
   }
   for (const n of instrNames){
     INSTR.push({ name:n, raw:dict[n], derived: deriveMetrics(dict[n]) });
+  }
+}
+
+async function loadDetectors(){
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(DET_SHEET)}`;
+  const r = await fetch(url, {mode:"cors"});
+  if (!r.ok) throw new Error(`HTTP ${r.status} loading Configs`);
+  const txt = await r.text();
+  const rows = d3.csvParseRows(txt);
+  if (rows.length < 2) return;
+  // row 0: ["Detector_type", name1, name2, ...]
+  // rows 1+: [param_key, unit, val1, val2, ...]
+  // Stop at the first empty name (separates detector block from Target block)
+  const rawNames = rows[0].slice(1);
+  const stopIdx = rawNames.findIndex(n => !n || !n.trim());
+  const names = (stopIdx >= 0 ? rawNames.slice(0, stopIdx) : rawNames).map(n => n.trim()).filter(Boolean);
+  // Build param→values map
+  const paramRows = {};
+  for (let ri = 1; ri < rows.length; ri++){
+    const key = rows[ri][0] ? rows[ri][0].trim() : "";
+    if (!key) continue;
+    paramRows[key] = rows[ri].slice(1); // index aligns with names
+  }
+  for (let ci = 0; ci < names.length; ci++){
+    const name = names[ci];
+    const d = {};
+    for (const key of DET_KEYS){
+      if (!paramRows[key]) continue;
+      const raw = paramRows[key][ci];
+      if (raw == null || raw === "") continue;
+      const f = parseFloat(raw);
+      if (isFinite(f)) d[key] = f;
+    }
+    DETECTORS.push({ name, ...d });
   }
 }
 
@@ -653,11 +694,12 @@ const RADAR_INSTR_METRICS = [
   { key:"Det_noise_per_frame", label:"Det noise/exp",    dir:-1, unit:"e-/exp", absMin:0    }
 ];
 const RADAR_DET_METRICS = [
-  { key:"Efficiency",    label:"Efficiency",   dir:1,  unit:"",    absMin:null },
-  { key:"background",    label:"Background",   dir:-1, unit:"e-",  absMin:0    },
-  { key:"Noise_per_exp", label:"Noise/exp",    dir:-1, unit:"e-",  absMin:0    },
-  { key:"pix_size",      label:"Pix size (μm)",dir:-1, unit:"μm",  absMin:0    },
-  { key:"QE",            label:"QE",           dir:1,  unit:"",    absMin:null }
+  { key:"QE",            label:"QE",           dir:1,  unit:"",        absMin:null },
+  { key:"RN",            label:"Read noise",   dir:-1, unit:"e-/pix",  absMin:0    },
+  { key:"Dark_current",  label:"Dark",         dir:-1, unit:"e-/px/h", absMin:0    },
+  { key:"CIC_charge",    label:"CIC",          dir:-1, unit:"e-/exp",  absMin:0    },
+  { key:"pixel_size",    label:"Pix size",     dir:-1, unit:"μm",      absMin:0    },
+  { key:"EM_gain",       label:"EM gain",      dir:1,  unit:"",        absMin:null }
 ];
 
 // Returns per-axis: rawValues[], scores[] (0=worst→1=best), inner (worst), outer (best)
@@ -822,14 +864,14 @@ function redrawAll(){ drawScatter(); drawInstrRadar(); drawDetRadar(); }
 
 async function main(){
   try {
-    await loadInstruments();
+    await Promise.all([loadInstruments(), loadDetectors()]);
   } catch(e){
     const st = document.getElementById("status");
     st.classList.add("err");
-    st.textContent = "Failed to load instrument DB: "+e.message;
+    st.textContent = "Failed to load DB: "+e.message;
     return;
   }
-  document.getElementById("status").textContent = `${INSTR.length} instruments loaded.`;
+  document.getElementById("status").textContent = `${INSTR.length} instruments, ${DETECTORS.length} detectors loaded.`;
 
   // --- Scatter setup -------------------------------------------------------
   fillSelect("sc-x",     SCATTER_AXES, "PSF_RMS_det");
@@ -844,10 +886,21 @@ async function main(){
   fillPickerOptions("instr-picker", INSTR.map(i => i.name));
   fillPickerOptions("det-picker",   DETECTORS.map(d => d.name));
 
-  // Pre-select first 3 instruments + EMCCD201 / Skipper / Perfect
+  // Pre-select first 3 instruments + representative detector subset
   INSTR.slice(0, 3).forEach(i => SEL_INSTR.push(i.name));
-  ["EMCCD201","Skipper","Perfect"].forEach(n => {
-    if (DETECTORS.some(d => d.name===n)) SEL_DET.push(n);
+  const DET_DEFAULT = ["temp=-110","CMOS UVEX","Skipper","Perfect","EMCCD201","CCD MUSE","H2RG","MAMA"];
+  DET_DEFAULT.forEach(n => { if (DETECTORS.some(d => d.name===n)) SEL_DET.push(n); });
+  if (!SEL_DET.length) DETECTORS.slice(0,6).forEach(d => SEL_DET.push(d.name));
+
+  // Scatter preset buttons
+  document.querySelectorAll(".preset-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.getElementById("sc-x").value     = btn.dataset.x;
+      document.getElementById("sc-y").value     = btn.dataset.y;
+      document.getElementById("sc-size").value  = btn.dataset.s;
+      document.getElementById("sc-color").value = btn.dataset.c;
+      drawScatter();
+    });
   });
 
   renderChips("instr-chips", SEL_INSTR, drawInstrRadar);

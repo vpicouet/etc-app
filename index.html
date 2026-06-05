@@ -714,6 +714,96 @@ function gauss1d(x, x0, sigma){
 }
 function erf01(x){return 0.5*(1+erf(x))}
 
+/* Parse a user-supplied 2-column CSV (wave, value). Auto-detects Å/nm/µm.
+   Returns a plain JS array resampled onto SPECTRA_DATA.grid (length = grid.n), or null on failure. */
+function parseUserCSV(text){
+  if (!SPECTRA_DATA) return null;
+  const rows = [];
+  for (const line of text.split(/\r?\n/)){
+    const parts = line.trim().split(/[\s,]+/);
+    if (parts.length < 2) continue;
+    const a = parseFloat(parts[0]), b = parseFloat(parts[1]);
+    if (!isFinite(a) || !isFinite(b)) continue;
+    rows.push([a, b]);
+  }
+  if (rows.length < 2) return null;
+  let wave = rows.map(r => r[0]);
+  const vals = rows.map(r => r[1]);
+  // Auto-detect units from median wavelength
+  const med = wave.slice().sort((a,b)=>a-b)[Math.floor(wave.length/2)];
+  if (med < 50)       wave = wave.map(w => w * 1000);   // µm → nm
+  else if (med > 1e4) wave = wave.map(w => w / 10);     // Å → nm
+  // Resample onto SPECTRA_DATA.grid (in nm)
+  const g = SPECTRA_DATA.grid;
+  const n = g.n;
+  const wMin = g.min_nm, wMax = g.max_nm;
+  // Build sorted index
+  const order = wave.map((_,i)=>i).sort((a,b)=>wave[a]-wave[b]);
+  const sw = order.map(i=>wave[i]);
+  const sv = order.map(i=>vals[i]);
+  const out = [];
+  for (let k=0; k<n; k++){
+    const nm = wMin + (wMax - wMin) * k / (n - 1);
+    if (nm <= sw[0])         { out.push(sv[0]); continue; }
+    if (nm >= sw[sw.length-1]){ out.push(sv[sv.length-1]); continue; }
+    let lo = 0, hi = sw.length - 1;
+    while (hi - lo > 1){ const mid = (lo+hi)>>1; if (sw[mid]<=nm) lo=mid; else hi=mid; }
+    const t = (nm - sw[lo]) / (sw[hi] - sw[lo]);
+    out.push(sv[lo]*(1-t) + sv[hi]*t);
+  }
+  return out;
+}
+
+/* Attach a "+ Load CSV…" sentinel option to an existing <select> element.
+   When the user picks it, a file picker opens. On load, onLoaded(key, array) is called
+   where array is the parsed+resampled curve. The new option (with key as value) is inserted
+   and selected. Returns nothing. */
+function attachCsvLoader(selectId, onLoaded){
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const SENTINEL = "__load_csv__";
+  const opt = document.createElement("option");
+  opt.value = SENTINEL;
+  opt.textContent = "+ Load CSV…";
+  sel.appendChild(opt);
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".csv,.txt";
+  input.style.display = "none";
+  document.body.appendChild(input);
+
+  sel.addEventListener("change", function(){
+    if (sel.value !== SENTINEL) return;
+    // Reset visual selection to previous value so it doesn't stay on sentinel
+    sel.value = sel.options[sel.selectedIndex - 1]?.value || sel.options[0]?.value || "";
+    input.click();
+  });
+
+  input.addEventListener("change", function(){
+    const file = input.files[0];
+    if (!file) return;
+    input.value = "";
+    const reader = new FileReader();
+    reader.onload = function(e){
+      const arr = parseUserCSV(e.target.result);
+      if (!arr){ alert("Could not parse CSV — expected 2 columns: wavelength, value."); return; }
+      const key = "user:" + file.name.replace(/\.csv$/i,"").replace(/\.txt$/i,"");
+      // Remove any previous user option with the same key
+      const prev = sel.querySelector(`option[value="${CSS.escape(key)}"]`);
+      if (prev) prev.remove();
+      // Insert before the sentinel
+      const newOpt = document.createElement("option");
+      newOpt.value = key;
+      newOpt.textContent = key;
+      sel.insertBefore(newOpt, sel.querySelector(`option[value="${SENTINEL}"]`));
+      sel.value = key;
+      onLoaded(key, arr);
+    };
+    reader.readAsText(file);
+  });
+}
+
 /* Interpolate a baked curve {min_nm, max_nm, n, values:[...]} onto a target wavelength array (Å). */
 function interpCurve(values, gridSpec, targetAngstroms){
   if (!values || !values.length) return null;
@@ -836,12 +926,24 @@ function simulateImage(p){
   let throughputSource = "flat";
   if (opt_QElambda){
     let used = false;
-    if (SPECTRA_DATA && SPECTRA_DATA.throughput_per_instrument && SPECTRA_DATA.throughput_per_instrument[instKey]){
+    // 1. User-loaded CSV takes priority
+    const userThKey = IMG_FLAGS.user_throughput_key || "";
+    if (!used && userThKey && SPECTRA_DATA && SPECTRA_DATA.throughput_per_instrument && SPECTRA_DATA.throughput_per_instrument[userThKey]){
+      const c = interpCurve(SPECTRA_DATA.throughput_per_instrument[userThKey], SPECTRA_DATA.grid, wavelengths);
+      if (c){
+        let mx = 0; for (let i=0;i<W;i++) if (c[i]>mx) mx = c[i];
+        if (mx > 0.01){
+          for (let i=0;i<W;i++) throughputCurve[i] = c[i]/mx;
+          used = true; throughputSource = userThKey;
+        }
+      }
+    }
+    // 2. Baked instrument-specific curve
+    if (!used && SPECTRA_DATA && SPECTRA_DATA.throughput_per_instrument && SPECTRA_DATA.throughput_per_instrument[instKey]){
       const c = interpCurve(SPECTRA_DATA.throughput_per_instrument[instKey], SPECTRA_DATA.grid, wavelengths);
       if (c){
         let mx = 0; for (let i=0;i<W;i++) if (c[i]>mx) mx = c[i];
         if (mx > 0.01){
-          // Normalise so the peak is 1 — relative shape only.
           for (let i=0;i<W;i++) throughputCurve[i] = c[i]/mx;
           used = true; throughputSource = `instrument (${instKey})`;
         }
@@ -992,16 +1094,11 @@ function simulateImage(p){
   let skyLineMult = null;
   if (opt_skylines){
     skyLineMult = new Float64Array(W); skyLineMult.fill(1);
-    // Look up sky lines: instrument-specific catalogue first, then selected global catalogue.
-    // Priority matches Observation.py: data/Instruments/<name>/Sky_emission_lines.csv > global.
+    // Use the catalogue selected in the dropdown (sky_kind). The user always controls which
+    // catalogue is shown — no silent instrument-specific override.
     let rawCurve = null;
-    if (SPECTRA_DATA){
-      const instKey2 = (STATE.current_instrument || "").replace(/ /g,"_");
-      if (SPECTRA_DATA.sky_lines_per_instrument && SPECTRA_DATA.sky_lines_per_instrument[instKey2]){
-        rawCurve = interpCurve(SPECTRA_DATA.sky_lines_per_instrument[instKey2], SPECTRA_DATA.sky_grid, wavelengths);
-      } else if (SPECTRA_DATA.sky_lines && p.sky_kind && SPECTRA_DATA.sky_lines[p.sky_kind]){
-        rawCurve = interpCurve(SPECTRA_DATA.sky_lines[p.sky_kind], SPECTRA_DATA.sky_grid, wavelengths);
-      }
+    if (SPECTRA_DATA && SPECTRA_DATA.sky_lines && p.sky_kind && SPECTRA_DATA.sky_lines[p.sky_kind]){
+      rawCurve = interpCurve(SPECTRA_DATA.sky_lines[p.sky_kind], SPECTRA_DATA.sky_grid, wavelengths);
     }
     if (rawCurve){
       // Convolve with the instrumental spectral resolution (same as Observation.py gaussian_filter1d)
@@ -1381,7 +1478,8 @@ const IMG_FLAGS = {
   spectrum:  "Baseline emission line",   // either "Baseline emission line" or a key in SPECTRA_DATA.spectra
   atm_kind:  "pwv_kpno (ground)",        // key in SPECTRA_DATA.atm (or "soft cosine fallback")
   sky_kind:  "spectra_0.2A",             // key in SPECTRA_DATA.sky_lines
-  smoothing: 0                           // extra Gaussian smoothing applied to spectralProfile (pixels, 0 = off)
+  smoothing: 0,                          // extra Gaussian smoothing applied to spectralProfile (pixels, 0 = off)
+  user_throughput_key: ""               // key in SPECTRA_DATA.throughput_per_instrument for a user-loaded CSV ("" = none)
 };
 
 // Loaded from data/spectra.json at startup
@@ -1593,13 +1691,53 @@ function buildImageOptionsUI(){
     spectraNames, IMG_FLAGS.spectrum,
     v => { IMG_FLAGS.spectrum = v; updateImgDependentUI(); },
     "Source spectrum. \"Baseline emission line\" = Gaussian centred on the observed λ. Other entries are real SEDs (QSO HST/FOS, COSMOS galaxies, Salvato QSO templates) resampled at bake-time.");
+  attachCsvLoader("img-spec", (key, arr) => {
+    if (!SPECTRA_DATA.spectra) SPECTRA_DATA.spectra = {};
+    // Peak-normalise like the baked spectra
+    const mx = Math.max(...arr.map(Math.abs));
+    SPECTRA_DATA.spectra[key] = mx > 0 ? arr.map(v => v/mx) : arr;
+    IMG_FLAGS.spectrum = key;
+    updateImgDependentUI();
+    scheduleUpdate();
+  });
 
   // Atm
   const atmNames = SPECTRA_DATA ? Object.keys(SPECTRA_DATA.atm) : [];
-  if (atmNames.length) dropdown("Atm curve", "img-atm-kind",
-    atmNames, IMG_FLAGS.atm_kind,
-    v => IMG_FLAGS.atm_kind = v,
-    "Atmospheric transmission curve (only used when \"Atmospheric absorption\" is enabled).");
+  if (atmNames.length){
+    dropdown("Atm curve", "img-atm-kind",
+      atmNames, IMG_FLAGS.atm_kind,
+      v => IMG_FLAGS.atm_kind = v,
+      "Atmospheric transmission curve (only used when \"Atmospheric absorption\" is enabled).");
+    attachCsvLoader("img-atm-kind", (key, arr) => {
+      if (!SPECTRA_DATA.atm) SPECTRA_DATA.atm = {};
+      // Clip to [0, 1] — transmission
+      SPECTRA_DATA.atm[key] = arr.map(v => Math.min(1, Math.max(0, v)));
+      IMG_FLAGS.atm_kind = key;
+      scheduleUpdate();
+    });
+  }
+
+  // Throughput (user CSV only — instrument curves are auto-loaded from the baked data)
+  {
+    const thRow = wrap.append("label").attr("class","kv").style("display","flex").style("gap","6px")
+      .style("margin-bottom","4px").style("align-items","center")
+      .attr("title","Load a user-supplied end-to-end throughput curve CSV (2 columns: wavelength, throughput 0–1). Overrides the baked instrument curve when Throughput(λ) is enabled.")
+      .text("Throughput CSV ");
+    const thSel = thRow.append("select").attr("id","img-throughput-csv").style("flex","1").style("min-width","0");
+    thSel.append("option").attr("value","").text("(instrument / Gaussian)");
+    thSel.property("value", IMG_FLAGS.user_throughput_key || "");
+    thSel.on("change", function(){
+      IMG_FLAGS.user_throughput_key = this.value || "";
+      scheduleUpdate();
+    });
+    attachCsvLoader("img-throughput-csv", (key, arr) => {
+      if (!SPECTRA_DATA.throughput_per_instrument) SPECTRA_DATA.throughput_per_instrument = {};
+      // Clip to [0, 1.5]
+      SPECTRA_DATA.throughput_per_instrument[key] = arr.map(v => Math.min(1.5, Math.max(0, v)));
+      IMG_FLAGS.user_throughput_key = key;
+      scheduleUpdate();
+    });
+  }
 
   // Sky-lines kind
   const skyNames = SPECTRA_DATA ? Object.keys(SPECTRA_DATA.sky_lines) : [];
