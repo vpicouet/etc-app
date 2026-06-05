@@ -273,73 +273,64 @@
   details.sheet input{width:100%;margin-top:4px;font-size:11px;padding:2px 4px;
     border:1px solid var(--line-strong);border-radius:var(--radius-sm);background:var(--panel);color:var(--text)}
 
-  /* Hide mob-tabs on desktop */
-  #mob-tabs{display:none}
+  /* Floating params button — hidden on desktop */
+  #mob-params-btn{display:none}
 
   /* === Responsive: mobile === */
   @media (max-width: 820px){
-    /* Full-viewport lock — no page scroll */
     html,body{overflow:hidden;height:100%;width:100%}
 
     /* Compact header */
     header nav a:not([href*="github"]){display:none}
     header h1{font-size:13px}
 
-    /* App: flex column, fills exactly between header and tab bar (52px) */
+    /* App: plot fills everything below header */
     .app{
-      display:flex;flex-direction:column;
-      height:calc(100vh - 38px - 52px);
+      display:block;
+      height:calc(100vh - 38px);
       width:100%;padding:0;gap:0;
-      grid-template-columns:none;
+      position:relative;
     }
 
-    /* Each panel fills the full app area as a flex child */
+    /* Plot takes full app area */
     #plot-wrap{
-      flex:1 1 auto;
-      width:100%;min-height:0;
+      position:absolute;inset:0;
       border-radius:0;border:none;margin:0;padding:4px;
-      overflow:hidden;
+      display:flex;flex-direction:column;overflow:hidden;
     }
-    #controls{
-      flex:1 1 auto;
-      width:100%;min-height:0;
-      border-radius:0;border:none;margin:0;
-      overflow-y:auto;padding:8px;
-      flex-direction:column;gap:6px;
-    }
-
-    /* Plot tab: show plot, hide params */
-    body[data-mob-tab="plot"]  #plot-wrap{display:flex}
-    body[data-mob-tab="plot"]  #controls{display:none}
-    /* Params tab: show params, hide plot */
-    body[data-mob-tab="params"] #plot-wrap{display:none}
-    body[data-mob-tab="params"] #controls{display:flex}
-
-    /* Let the SVG/canvases stretch to fill plot-wrap */
     .plot-area{flex:1 1 auto;min-height:0;overflow:hidden}
+
+    /* Controls: overlay on top of plot, hidden by default */
+    #controls{
+      position:absolute;inset:0;
+      border-radius:0;border:none;margin:0;padding:10px;
+      overflow-y:auto;
+      display:none;
+      flex-direction:column;gap:6px;
+      background:var(--panel);
+      opacity:0.96;
+      z-index:50;
+    }
+    body[data-mob-params="1"] #controls{display:flex}
 
     /* Slider columns on phone */
     .slider-row{grid-template-columns:110px 1fr 68px}
 
-    /* Bottom tab bar — fixed, 52px tall */
-    #mob-tabs{
+    /* Floating ⚙ button bottom-right */
+    #mob-params-btn{
       display:flex;
-      position:fixed;bottom:0;left:0;right:0;
-      height:52px;
-      background:var(--header-bg);
-      border-top:2px solid var(--accent);
-      z-index:200;
+      position:fixed;bottom:16px;right:16px;
+      width:44px;height:44px;
+      border-radius:50%;
+      background:var(--accent);
+      color:#fff;
+      border:none;
+      font-size:20px;
+      align-items:center;justify-content:center;
+      cursor:pointer;
+      z-index:100;
+      box-shadow:0 2px 8px rgba(0,0,0,0.4);
     }
-    #mob-tabs button{
-      flex:1;border:none;border-radius:0;background:transparent;
-      color:var(--muted);font-size:12px;font-weight:500;
-      font-family:var(--font-ui);cursor:pointer;
-      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-      padding:0;
-    }
-    #mob-tabs button span.icon{font-size:18px;line-height:1}
-    #mob-tabs button.mob-active{color:var(--accent)}
-    #mob-tabs button.mob-active span.label{font-weight:700}
   }
 </style>
 <!-- Theme stylesheet placed AFTER the inline style so its CSS variables effectively override the defaults. -->
@@ -4498,32 +4489,15 @@ async function main(){
 }
 main();
 
-/* === Mobile tab bar === */
-document.body.setAttribute("data-mob-tab", "plot");
-document.getElementById("mob-tab-plot").addEventListener("click", function(){
-  document.body.setAttribute("data-mob-tab", "plot");
-  this.classList.add("mob-active");
-  document.getElementById("mob-tab-params").classList.remove("mob-active");
-  window.dispatchEvent(new Event("resize"));
-  scheduleUpdate();
-});
-document.getElementById("mob-tab-params").addEventListener("click", function(){
-  document.body.setAttribute("data-mob-tab", "params");
-  this.classList.add("mob-active");
-  document.getElementById("mob-tab-plot").classList.remove("mob-active");
+/* === Mobile floating params button === */
+document.getElementById("mob-params-btn").addEventListener("click", function(){
+  const open = document.body.getAttribute("data-mob-params") === "1";
+  document.body.setAttribute("data-mob-params", open ? "0" : "1");
+  this.textContent = open ? "⚙️" : "✕";
 });
 </script>
 
-<div id="mob-tabs">
-  <button id="mob-tab-plot" class="mob-active" aria-label="Plot tab">
-    <span class="icon">📈</span>
-    <span class="label">Plot</span>
-  </button>
-  <button id="mob-tab-params" aria-label="Params tab">
-    <span class="icon">⚙️</span>
-    <span class="label">Params</span>
-  </button>
-</div>
+<button id="mob-params-btn" title="Toggle parameters">⚙️</button>
 
 </body>
 </html>
