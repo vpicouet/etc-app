@@ -7,6 +7,8 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <!-- Baked spectra data — also accessible via fetch("data/spectra.json"). The .js wrapper lets file:// work. -->
 <script src="data/spectra.js"></script>
+<!-- Emission cube index — sets window.CUBE_INDEX_BAKED. Also accessible via fetch("data/cubes/index.json"). -->
+<script src="data/cubes/index.js"></script>
 <style>
   /* ===== DESIGN TOKENS ============================================================
      All visible style is parameterised through CSS variables so that theme files in
@@ -158,15 +160,18 @@
     background:var(--accordion-summary-bg);border-radius:var(--radius-sm) var(--radius-sm) 0 0;list-style:none;
     display:flex;justify-content:space-between;align-items:center;user-select:none;color:var(--text);
     font-family:var(--font-display);letter-spacing:var(--letter-spacing-display);text-transform:var(--text-transform-display)}
+  .ifs-check{display:flex;align-items:center;gap:3px;font-size:11px;font-weight:normal;
+    color:var(--muted);cursor:pointer;margin-left:auto;margin-right:6px}
   .acc[open] > summary{border-bottom:1px solid var(--line)}
   .acc > summary::after{content:"▾";color:var(--muted);font-size:10px}
   .acc[open] > summary::after{content:"▴"}
   .acc-body{padding:6px 8px}
 
   /* Slider rows */
-  .slider-row{display:grid;grid-template-columns: 130px 1fr 78px;gap:6px;
+  .slider-row{display:grid;grid-template-columns: 145px 1fr 78px;gap:6px;
     align-items:center;margin-bottom:4px}
-  .slider-row label{font-size:11px;color:var(--muted);cursor:pointer;user-select:none}
+  .slider-row label{font-size:11px;color:var(--muted);cursor:pointer;user-select:none;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   /* Slider row controlled by an active dependency: greyed out + slider disabled */
   .slider-row.dep-locked{opacity:0.45}
   .slider-row.dep-locked input[type="range"]{pointer-events:none}
@@ -948,7 +953,8 @@ function simulateImage(p){
   // factor_CU2el: e-/s per LU per pixel (depends on mode; for the image, take per-pixel rate = effective_area · arcsec2str · Slitwidth · dispersion)
   let factor_CU2el, factor_CU2el_sky;
   if (spectro){
-    factor_CU2el     = effective_area * arcsec2str * Math.min(Slitwidth, Size_source) * dispersion;
+    const sigma_eff_img = Math.sqrt(Size_source**2 + PSF_RMS_det**2);
+    factor_CU2el     = effective_area * arcsec2str * Math.min(Slitwidth, sigma_eff_img) * dispersion;
     factor_CU2el_sky = effective_area * arcsec2str * Slitwidth * dispersion;
   } else {
     factor_CU2el     = effective_area * pixel_scale*pixel_scale * Throughput_FWHM;
@@ -966,7 +972,7 @@ function simulateImage(p){
   // N images stacked
   const cosmic_ray_loss = Math.min(cosmic_ray_loss_per_sec*(exposure_time + readout_time/2), 1);
   const N_images = acquisition_time*3600/(exposure_time + readout_time);
-  const N_stack = Math.max(1, Math.floor(N_images * (1-cosmic_ray_loss)));
+  const N_stack = Math.floor(N_images * (1-cosmic_ray_loss));
 
   // λ-axis (Å)
   const wave_min = 10*wavelength - (W/2)*dispersion;
@@ -1067,32 +1073,35 @@ function simulateImage(p){
 
   const spectralProfile = new Float64Array(W);
   const wantedSpec = p.spectrum || "Baseline emission line";
-  if (wantedSpec === "Baseline emission line" || !SPECTRA_DATA || !SPECTRA_DATA.spectra[wantedSpec]){
-    // Gaussian emission line, peak=1 at the centre
-    for (let i=0;i<W;i++) spectralProfile[i] = gauss1d(i, W/2, PSF_lam);
-  } else {
-    const redshift = (typeof p.Redshift==="number") ? p.Redshift : 0;
-    const observedRest = new Float64Array(W);
-    for (let i=0;i<W;i++) observedRest[i] = wavelengths[i] / (1 + redshift);
-    const fluxRest = interpCurve(SPECTRA_DATA.spectra[wantedSpec], SPECTRA_DATA.grid, observedRest);
-    // Normalise by the MEAN inside the detector window (matches Observation.py:
-    //   spectra = (flux_in_erg.value / np.mean(flux_in_erg.value)) * flux).
-    // This way the source is always visible at the observed wavelength even if the SED peaks elsewhere.
-    let sum = 0, count = 0;
-    for (let i=0;i<W;i++){ if (isFinite(fluxRest[i]) && fluxRest[i]>0){ sum += fluxRest[i]; count++; } }
-    const meanFlux = count > 0 ? sum / count : 1;
-    const norm = meanFlux > 0 ? meanFlux : 1;
-    for (let i=0;i<W;i++) spectralProfile[i] = fluxRest[i] / norm;
-  }
-  // Apply throughput × atm (multiplicative shaping along λ — does NOT renormalise)
-  for (let i=0;i<W;i++) spectralProfile[i] *= throughputCurve[i]*atmCurve[i];
+  const isCubeSpec = EMISSION_CUBES_ENABLED && wantedSpec.startsWith(CUBE_KEY_PREFIX);
+  const cubeKey    = isCubeSpec ? wantedSpec.slice(CUBE_KEY_PREFIX.length) : null;
+  const cubeMeta   = (cubeKey && CUBE_INDEX) ? CUBE_INDEX[cubeKey] : null;
+  const cubeData   = (cubeKey && CUBE_CACHE[cubeKey]) ? CUBE_CACHE[cubeKey] : null;
 
-  // Convolve baked spectra with the instrumental spectral PSF (PSF_lam).
-  // The "Baseline emission line" path already builds a Gaussian of sigma=PSF_lam, so skip it.
-  if (wantedSpec !== "Baseline emission line"){
-    const convolved = gaussConv1D(spectralProfile, PSF_lam);
-    for (let i=0;i<W;i++) spectralProfile[i] = convolved[i];
+  if (!isCubeSpec){
+    if (wantedSpec === "Baseline emission line" || !SPECTRA_DATA || !SPECTRA_DATA.spectra[wantedSpec]){
+      for (let i=0;i<W;i++) spectralProfile[i] = gauss1d(i, W/2, PSF_lam);
+    } else {
+      const redshift = (typeof p.Redshift==="number") ? p.Redshift : 0;
+      const observedRest = new Float64Array(W);
+      for (let i=0;i<W;i++) observedRest[i] = wavelengths[i] / (1 + redshift);
+      const fluxRest = interpCurve(SPECTRA_DATA.spectra[wantedSpec], SPECTRA_DATA.grid, observedRest);
+      let sum = 0, count = 0;
+      for (let i=0;i<W;i++){ if (isFinite(fluxRest[i]) && fluxRest[i]>0){ sum += fluxRest[i]; count++; } }
+      const meanFlux = count > 0 ? sum / count : 1;
+      const norm = meanFlux > 0 ? meanFlux : 1;
+      for (let i=0;i<W;i++) spectralProfile[i] = fluxRest[i] / norm;
+    }
   }
+  // Apply throughput × atm (only for non-cube path; cubes get per-column multiplication below)
+  if (!isCubeSpec){
+    for (let i=0;i<W;i++) spectralProfile[i] *= throughputCurve[i]*atmCurve[i];
+    if (wantedSpec !== "Baseline emission line"){
+      const convolved = gaussConv1D(spectralProfile, PSF_lam);
+      for (let i=0;i<W;i++) spectralProfile[i] = convolved[i];
+    }
+  }
+
   // Spatial profile — Gaussian, peak=1 (NOT sum=1, matches Python)
   const spatialProfile = new Float64Array(H);
   for (let j=0;j<H;j++) spatialProfile[j] = gauss1d(j, H/2, PSF_x);
@@ -1113,32 +1122,128 @@ function simulateImage(p){
     slitProfile.fill(1);
   }
 
-  // Build the noiseless source image (e-/pix/exp).
-  // Python: source_im = outer(spectra, spatial × slit) / Σ_smaller_spatial
-  // i.e. it divides by the SUM of a NARROWER Gaussian (sigma = PSF_lambda_pix² / (PSF_λ² + PSF_lambda_pix²)
-  // for the spectral axis, Rx² / (PSF_x² + Rx²) for the spatial axis).
-  // This narrower-PSF normaliser makes the source peak proportional to Signal_el_total / (PSF area).
-  //
-  // We implement the same idea: build the narrower Gaussian and sum it once.
-  const psf_spec_narrow_sigma = Math.max(0.5, PSF_lambda_pix * PSF_lambda_pix / Math.max(0.01, PSF_lam*PSF_lam + PSF_lambda_pix*PSF_lambda_pix));
-  const psf_spat_narrow_sigma = Math.max(0.5, Rx * Rx / Math.max(0.01, PSF_x*PSF_x + Rx*Rx));
-  // Sum of a Gaussian peak=1 narrower-σ on a wide window  ≈ σ × √(2π) when σ is small vs window
-  let sumNarrowSpec = 0;
-  for (let i=0;i<W;i++) sumNarrowSpec += gauss1d(i, W/2, psf_spec_narrow_sigma);
-  let sumNarrowSpat = 0;
-  for (let j=0;j<H;j++) sumNarrowSpat += gauss1d(j, H/2, psf_spat_narrow_sigma);
-  const normFactor = (sumNarrowSpec || 1) * (sumNarrowSpat || 1);
-
-  // Amplitude: Python uses `flux = Signal_el / exposure_time` (e-/s) but the whole image is implicitly
-  // multiplied by exposure_time downstream. In our model we already have Signal_el_total (e-/exp,
-  // total integrated through the slit). So the right amplitude is Signal_el_total / normFactor.
-  const amplitude = Signal_el_total / normFactor;
-
   const source = new Float64Array(W*H);
-  for (let j=0;j<H;j++){
-    const spat = amplitude * spatialProfile[j] * slitProfile[j];
+
+  if (isCubeSpec && cubeMeta && cubeData){
+    // ---- Emission datacube path ------------------------------------------
+    // cube layout: Float32Array, row-major (nz, ny, nx) as written by bake_cubes.py
+    // We need to:
+    //   1. Map detector pixels (W spectral × H spatial) to cube indices
+    //   2. Bilinearly interpolate each cube slice onto the detector grid
+    //   3. Convolve spatially with PSF (Gaussian kernel, sigma = Rx pix)
+    //   4. Apply throughput × atm per spectral column
+    //   5. Scale by Signal_el_total / cube_peak  (cube is peak-normalised to 1)
+    const [nz, ny, nx] = cubeMeta.shape;   // cube axes
+    // Wavelength mapping: cube λ axis is linear from wave_min to wave_max (nm)
+    const cWaveMin = cubeMeta.wave_min, cWaveMax = cubeMeta.wave_max;
+    const cWaveStep = (cWaveMax - cWaveMin) / Math.max(1, nz - 1);
+
+    // Detector wavelength axis is in Å → convert to nm for cube lookup
+    const detWave_nm = new Float64Array(W);
+    for (let i=0;i<W;i++) detWave_nm[i] = wavelengths[i] / 10;  // Å → nm
+
+    // Spatial mapping: cube spatial extent = meta.spatial_arcsec arcsec for nx pixels
+    // Detector spatial extent = H * pixel_scale arcsec, centred
+    const cubeArcsec = cubeMeta.spatial_arcsec || (nx * 1.0);  // fallback 1"/pix
+    const detArcsec  = H * pixel_scale;   // total detector spatial extent in arcsec
+
+    // Gaussian PSF kernel for spatial convolution (sigma = Rx detector pixels)
+    const kRad = Math.max(2, Math.ceil(Rx * 3));
+    const psfKernel = new Float64Array(2*kRad+1);
+    let psfSum = 0;
+    for (let d=-kRad; d<=kRad; d++){ psfKernel[d+kRad] = Math.exp(-0.5*(d/Math.max(0.1,Rx))**2); psfSum += psfKernel[d+kRad]; }
+    if (psfSum > 0) for (let d=0; d<psfKernel.length; d++) psfKernel[d] /= psfSum;
+
+    // For each detector spectral column i, fetch a cube spatial slice and resample onto H rows
     for (let i=0;i<W;i++){
-      source[j*W + i] = spat * spectralProfile[i];
+      // Skip columns outside the cube wavelength range
+      const wNm = detWave_nm[i];
+      if (wNm < cWaveMin || wNm > cWaveMax) continue;
+
+      // Fractional cube spectral index
+      const cz_f = (wNm - cWaveMin) / cWaveStep;
+      const cz0  = Math.max(0, Math.min(nz-2, Math.floor(cz_f)));
+      const cz1  = cz0 + 1;
+      const tz   = cz_f - cz0;
+
+      // Resample cube spatial column onto H detector rows (bilinear in y)
+      const sliceH = new Float64Array(H);
+      for (let j=0;j<H;j++){
+        // Map detector row j to cube row index (centre-aligned)
+        const cubeY_f = (j / (H-1) - 0.5) * (detArcsec / cubeArcsec) * ny + ny/2;
+        const cy0 = Math.max(0, Math.min(ny-2, Math.floor(cubeY_f)));
+        const cy1 = cy0 + 1;
+        const ty  = cubeY_f - cy0;
+        // Sample at cube centre column (we project the cube onto the slit centre — nx mid)
+        const cx  = Math.floor(nx / 2);
+        // Trilinear interp (spectral × spatial; spatial x collapsed to slit centre)
+        const v00 = cubeData[cz0*ny*nx + cy0*nx + cx];
+        const v10 = cubeData[cz0*ny*nx + cy1*nx + cx];
+        const v01 = cubeData[cz1*ny*nx + cy0*nx + cx];
+        const v11 = cubeData[cz1*ny*nx + cy1*nx + cx];
+        sliceH[j] = Math.max(0,
+          (1-tz)*((1-ty)*v00 + ty*v10) +
+             tz *((1-ty)*v01 + ty*v11));
+      }
+
+      // Convolve spatially with PSF kernel
+      const convH = new Float64Array(H);
+      for (let j=0;j<H;j++){
+        let s = 0;
+        for (let d=-kRad; d<=kRad; d++){
+          const jj = j+d; if (jj<0||jj>=H) continue;
+          s += sliceH[jj] * psfKernel[d+kRad];
+        }
+        convH[j] = s;
+      }
+
+      // Apply throughput × atm × slit profile; scale to e-/pix/exp
+      const thAtm = throughputCurve[i] * atmCurve[i];
+      for (let j=0;j<H;j++){
+        source[j*W + i] = convH[j] * slitProfile[j] * Signal_el_total * thAtm;
+      }
+    }
+
+    // Also fill spectralProfile with the cube spectrum at the centre pixel (for IFS + optics panel)
+    const cx = Math.floor(nx/2), cy = Math.floor(ny/2);
+    for (let i=0;i<W;i++){
+      const wNm = detWave_nm[i];
+      if (wNm < cWaveMin || wNm > cWaveMax){ spectralProfile[i] = 0; continue; }
+      const cz_f = (wNm - cWaveMin) / cWaveStep;
+      const cz0  = Math.max(0, Math.min(nz-2, Math.floor(cz_f)));
+      const tz   = cz_f - cz0;
+      spectralProfile[i] = Math.max(0,
+        (1-tz)*cubeData[cz0*ny*nx + cy*nx + cx] +
+            tz*cubeData[(cz0+1)*ny*nx + cy*nx + cx]) * throughputCurve[i] * atmCurve[i];
+    }
+    // Normalise spectralProfile by mean (for display consistency)
+    let spSum = 0, spCnt = 0;
+    for (let i=0;i<W;i++) if (spectralProfile[i]>0){ spSum+=spectralProfile[i]; spCnt++; }
+    const spMean = spCnt>0 ? spSum/spCnt : 1;
+    if (spMean>0) for (let i=0;i<W;i++) spectralProfile[i] /= spMean;
+
+  } else {
+    // ---- Standard separable path (Gaussian / SED) -------------------------
+    // If cube was selected but not yet loaded, trigger async load and fall back to baseline
+    if (isCubeSpec && cubeKey && !cubeData){
+      loadCube(cubeKey).then(() => scheduleUpdate());
+      for (let i=0;i<W;i++) spectralProfile[i] = gauss1d(i, W/2, PSF_lam);
+    }
+
+    const psf_spec_narrow_sigma = Math.max(0.5, PSF_lambda_pix * PSF_lambda_pix / Math.max(0.01, PSF_lam*PSF_lam + PSF_lambda_pix*PSF_lambda_pix));
+    const psf_spat_narrow_sigma = Math.max(0.5, Rx * Rx / Math.max(0.01, PSF_x*PSF_x + Rx*Rx));
+    let sumNarrowSpec = 0;
+    for (let i=0;i<W;i++) sumNarrowSpec += gauss1d(i, W/2, psf_spec_narrow_sigma);
+    let sumNarrowSpat = 0;
+    for (let j=0;j<H;j++) sumNarrowSpat += gauss1d(j, H/2, psf_spat_narrow_sigma);
+    const normFactor = (sumNarrowSpec || 1) * (sumNarrowSpat || 1);
+    const amplitude = Signal_el_total / normFactor;
+
+    for (let j=0;j<H;j++){
+      const spat = amplitude * spatialProfile[j] * slitProfile[j];
+      for (let i=0;i<W;i++){
+        source[j*W + i] = spat * spectralProfile[i];
+      }
     }
   }
   // (debug log removed)
@@ -1209,7 +1314,7 @@ function simulateImage(p){
         const noise2 = s + bg + RN*RN;
         const snr1 = noise2>0 ? s/Math.sqrt(noise2) : 0;
         single[j*W+i] = snr1;
-        stack[j*W+i] = snr1 * Math.sqrt(Math.max(1,Nst));
+        stack[j*W+i] = Nst > 0 ? snr1 * Math.sqrt(Nst) : 0;
       }
     }
   } else {
@@ -1237,7 +1342,7 @@ function simulateImage(p){
         } else {
           s = Nst > 0 ? s / Nst : 0;
         }
-        s += norm(0, Nst>0 ? RN/Math.sqrt(Nst) : RN);
+        s = Nst > 0 ? s + norm(0, RN/Math.sqrt(Nst)) : 0;
         stack[j*W+i] = s;
       }
     }
@@ -1319,29 +1424,38 @@ function computeObservation(p){
   const PSF_lambda_pix = new Array(N);
   for(let i=0;i<N;i++) PSF_lambda_pix[i] = 10*wavelength[i]/Spectral_resolution[i]/dispersion[i];
 
+  // σ_eff: quadratic convolution of source and detector PSF — the actual image size on the detector.
+  // Used everywhere except "per pix" (single pixel, PSF irrelevant) and the IFS 2λpix special mode.
+  const sigma_eff = new Array(N);
+  for(let i=0;i<N;i++) sigma_eff[i] = Math.sqrt(Size_source[i]**2 + PSF_RMS_det[i]**2);
+
   const source_size = new Array(N), elem_size = new Array(N), pixels_total_source = new Array(N);
-  // pix_spat / pix_spec: spatial and spectral pixel counts for the active SNR mode (display only)
-  const pix_spat = new Array(N), pix_spec = new Array(N);
+  // pix_nx / pix_spec / pix_ny: spatial pixels along one slicer, spectral pixels, IFS slicer count.
+  // pix_ny = 1 for non-IFS. Display: nx × nλ (× ny if IFS).
+  const pix_spat = new Array(N), pix_spec = new Array(N), pix_ny = new Array(N).fill(1);
   for(let i=0;i<N;i++){
     if (spectro){
+      const seff = sigma_eff[i];
       const sspec = Math.max(1, Math.sqrt(PSF_lambda_pix[i]**2 + Math.pow(Math.min(Line_width[i],Bandwidth[i])/dispersion[i],2)));
-      const spat_src = Math.max(Math.min(Size_source[i]*fsr, Slitlength[i])/pixel_scale[i], 1);
+      const spat_src = Math.max(Math.min(seff*fsr, Slitlength[i])/pixel_scale[i], 1);
       source_size[i] = spat_src * sspec;
-      const nslices_src = IFS ? Math.ceil(Math.sqrt(Size_source[i]**2+PSF_RMS_mask[i]**2)*fsr/Slitwidth[i]) : 1;
+      const nslices_src = IFS ? Math.ceil(Math.sqrt(seff**2+PSF_RMS_mask[i]**2)*fsr/Slitwidth[i]) : 1;
       pixels_total_source[i] = source_size[i] * nslices_src;
       const spat_elem = Math.ceil(Math.min(PSF_RMS_mask[i]*fsr, Slitlength[i])/pixel_scale[i]);
       const spec_elem = Math.ceil(Math.sqrt(Math.min(PSF_RMS_det[i]/pixel_scale[i], PSF_lambda_pix[i])**2 + Math.min(Line_width[i]/dispersion[i], PSF_lambda_pix[i])**2));
       const nslices_elem = IFS ? Math.ceil(PSF_RMS_mask[i]*fsr/Slitwidth[i]) : 1;
       elem_size[i] = spat_elem * spec_elem * nslices_elem;
-      // store components for the currently active mode (filled in section 4 below)
-      pix_spat[i] = spat_elem * nslices_elem;
+      // defaults = res-elem components (overwritten in section 4 for other modes)
+      pix_spat[i] = spat_elem;
       pix_spec[i] = spec_elem;
+      pix_ny[i]   = nslices_elem;
     } else {
-      source_size[i] = Math.pow(Size_source[i]*fsr/pixel_scale[i], 2);
+      const seff = sigma_eff[i];
+      source_size[i] = Math.pow(seff*fsr/pixel_scale[i], 2);
       elem_size[i]   = Math.pow(PSF_RMS_det[i]*fsr/pixel_scale[i], 2);
       pixels_total_source[i] = source_size[i];
-      pix_spat[i] = Math.ceil(Math.sqrt(source_size[i]));
-      pix_spec[i] = Math.ceil(Math.sqrt(source_size[i]));
+      const side = Math.ceil(seff*fsr/pixel_scale[i]);
+      pix_spat[i] = side; pix_spec[i] = side; pix_ny[i] = 1;
     }
   }
 
@@ -1349,29 +1463,32 @@ function computeObservation(p){
   let number_pixels_used = new Array(N);
   if (SNR_res==="per pix"){
     number_pixels_used.fill(1);
-    for(let i=0;i<N;i++){ pix_spat[i]=1; pix_spec[i]=1; }
+    for(let i=0;i<N;i++){ pix_spat[i]=1; pix_spec[i]=1; pix_ny[i]=1; }
   } else if (SNR_res==="per Res elem"){
     for(let i=0;i<N;i++){
       number_pixels_used[i] = Math.ceil(elem_size[i]);
-      // pix_spat/pix_spec already set to res-elem components above
+      // pix_spat/pix_spec/pix_ny already set to res-elem components above
     }
   } else if (SNR_res==="per Source"){
     for(let i=0;i<N;i++){
       number_pixels_used[i] = Math.ceil(pixels_total_source[i]);
       if (spectro){
+        const seff = sigma_eff[i];
         const sspec = Math.max(1, Math.sqrt(PSF_lambda_pix[i]**2 + Math.pow(Math.min(Line_width[i],Bandwidth[i])/dispersion[i],2)));
-        const spat_src = Math.max(Math.min(Size_source[i]*fsr, Slitlength[i])/pixel_scale[i], 1);
-        const nslices_src = IFS ? Math.ceil(Math.sqrt(Size_source[i]**2+PSF_RMS_mask[i]**2)*fsr/Slitwidth[i]) : 1;
-        pix_spat[i] = Math.ceil(spat_src * nslices_src);
+        const spat_src = Math.max(Math.min(seff*fsr, Slitlength[i])/pixel_scale[i], 1);
+        const nslices_src = IFS ? Math.ceil(Math.sqrt(seff**2+PSF_RMS_mask[i]**2)*fsr/Slitwidth[i]) : 1;
+        pix_spat[i] = Math.ceil(spat_src);
         pix_spec[i] = Math.ceil(sspec);
+        pix_ny[i]   = nslices_src;
       } else {
-        const side = Math.ceil(Size_source[i]*fsr/pixel_scale[i]);
-        pix_spat[i] = side; pix_spec[i] = side;
+        const side = Math.ceil(sigma_eff[i]*fsr/pixel_scale[i]);
+        pix_spat[i] = side; pix_spec[i] = side; pix_ny[i] = 1;
       }
     }
   } else {
     if (spectro && IFS){
       for(let i=0;i<N;i++){
+        // IFS 2λpix mode uses its own geometry — keep Size_source as-is here
         const spatial_pix_per_slicer = Slitwidth[i]/pixel_scale[i];
         const spectral_pix_adaptive = Math.max(2, Math.pow(2, Math.floor(Math.log2(spatial_pix_per_slicer))));
         const nslices = Math.sqrt(Size_source[i]**2 + PSF_RMS_mask[i]**2)/Slitwidth[i];
@@ -1379,20 +1496,21 @@ function computeObservation(p){
         pixels_total_source[i] = pixels_spat_total * spectral_pix_adaptive;
         number_pixels_used[i] = pixels_total_source[i];
         source_size[i] = (pixels_spat_total/nslices) * spectral_pix_adaptive;
-        pix_spat[i] = Math.ceil(pixels_spat_total);
+        pix_spat[i] = Math.ceil(1/pixel_scale[i]);
         pix_spec[i] = Math.ceil(spectral_pix_adaptive);
+        pix_ny[i]   = Math.ceil(nslices);
       }
     } else {
       for(let i=0;i<N;i++){
         number_pixels_used[i] = Math.ceil(pixels_total_source[i]);
         if (spectro){
+          const seff = sigma_eff[i];
           const sspec = Math.max(1, Math.sqrt(PSF_lambda_pix[i]**2 + Math.pow(Math.min(Line_width[i],Bandwidth[i])/dispersion[i],2)));
-          const spat_src = Math.max(Math.min(Size_source[i]*fsr, Slitlength[i])/pixel_scale[i], 1);
-          pix_spat[i] = Math.ceil(spat_src);
-          pix_spec[i] = Math.ceil(sspec);
+          const spat_src = Math.max(Math.min(seff*fsr, Slitlength[i])/pixel_scale[i], 1);
+          pix_spat[i] = Math.ceil(spat_src); pix_spec[i] = Math.ceil(sspec); pix_ny[i] = 1;
         } else {
-          const side = Math.ceil(Size_source[i]*fsr/pixel_scale[i]);
-          pix_spat[i] = side; pix_spec[i] = side;
+          const side = Math.ceil(sigma_eff[i]*fsr/pixel_scale[i]);
+          pix_spat[i] = side; pix_spec[i] = side; pix_ny[i] = 1;
         }
       }
     }
@@ -1431,14 +1549,13 @@ function computeObservation(p){
       sourceSizeAfter[i] = Size_source[i]*slicer_eff;
       slitSizeAfter[i]   = Size_source[i]*slicer_eff;
     } else {
-      // Spatial extent collected along slit length (capped by slit) and slit width (FWHM units).
+      // Use σ_eff (source ⊛ PSF_det) so point sources are correctly spread over the PSF footprint.
       // fsr=2.35 converts σ → FWHM for comparison with physical slit dimensions.
-      // Source: integrate over min(source FWHM, slit) in both directions — same formula for IFS and non-IFS.
-      // Sky:    always limited by the slit aperture in both directions.
-      const along  = Math.min(Size_source[i]*fsr, Slitlength[i]);
-      const across = Math.min(Size_source[i]*fsr, Slitwidth[i]);
+      const seff = sigma_eff[i];
+      const along  = Math.min(seff*fsr, Slitlength[i]);
+      const across = Math.min(seff*fsr, Slitwidth[i]);
       sourceSizeAfter[i] = along * across;
-      slitSizeAfter[i]   = along * (IFS ? Math.max(Size_source[i]*fsr, Slitwidth[i]) : Slitwidth[i]);
+      slitSizeAfter[i]   = along * (IFS ? Math.max(seff*fsr, Slitwidth[i]) : Slitwidth[i]);
     }
   }
 
@@ -1452,9 +1569,12 @@ function computeObservation(p){
         factor_CU2el[i]     = effective_area[i]*arcsec2str*sourceSizeAfter[i]*spectral_bin_A/pixels_total_source[i];
         factor_CU2el_sky[i] = effective_area[i]*arcsec2str*slitSizeAfter[i]  *spectral_bin_A/pixels_total_source[i];
       } else {
+        // Divide by source_size (pixels in one slicer/slit spatial×spectral footprint), NOT pixels_total_source.
+        // pixels_total_source includes the IFS nslices factor which belongs only in number_pixels_used (noise),
+        // not in the per-pixel flux conversion — otherwise IFS mode artificially divides the signal by nslices.
         const lw = Math.min(Line_width[i], Bandwidth[i]);
-        factor_CU2el[i]     = effective_area[i]*arcsec2str*lw*sourceSizeAfter[i]/pixels_total_source[i];
-        factor_CU2el_sky[i] = effective_area[i]*arcsec2str*Math.max(lw, dispersion[i])*slitSizeAfter[i]/pixels_total_source[i];
+        factor_CU2el[i]     = effective_area[i]*arcsec2str*lw*sourceSizeAfter[i]/source_size[i];
+        factor_CU2el_sky[i] = effective_area[i]*arcsec2str*Math.max(lw, dispersion[i])*slitSizeAfter[i]/source_size[i];
       }
     } else {
       factor_CU2el[i] = pixel_scale[i]*pixel_scale[i]*Throughput_FWHM[i];
@@ -1534,7 +1654,7 @@ function computeObservation(p){
   return { x: p.xArr, N, noises_per_exp, noises, electrons_per_pix,
     Signal_el, Dark_current_f, sky, RN_final, CIC_charge, Additional_background,
     SNR, Total_noise_final, number_pixels_used, source_size, elem_size,
-    pix_spat, pix_spec,
+    pix_spat, pix_spec, pix_ny,
     SB_lim_per_pix, SB_lim_per_res, SB_lim_per_source, factor, Signal_resolution };
 }
 
@@ -1543,12 +1663,12 @@ function computeObservation(p){
    ========================================================================== */
 const PARAMS = {
   Signal:       {tab:"Source", label:"Flux", unit:"erg/cm²/s/arcsec²/Å", min:-21, max:-9, step:0.1, log:true, default_log:-17, fmt:e=>e.toExponential(2), xable:true, tip:"Surface brightness of the diffuse source in erg/cm²/s/arcsec²/Å. Values >1 are interpreted as UV magnitudes and converted to flux."},
-  Size_source:  {tab:"Source", label:"Spatial ext. (σ)", unit:"\"", min:0.01, max:100, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial extension of the source (sigma) in arcseconds. Affects the number of pixels integrated over and aperture losses."},
+  Size_source:  {tab:"Source", label:"Spatial ext. (σ)", unit:"\"", min:0, max:100, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial extension of the source (sigma) in arcseconds. Affects the number of pixels integrated over and aperture losses."},
   Sky:          {tab:"Source", label:"Sky brightness", unit:"erg/cm²/s/arcsec²/Å", min:-23, max:-15, step:0.1, log:true, default_log:-18, fmt:e=>e.toExponential(2), xable:true, tip:"Sky background illumination (zodiacal + galactic) in erg/cm²/s/arcsec²/Å."},
   Line_width:   {tab:"Source", label:"Line eq. width", unit:"Å", min:0.01, max:100, step:0.1, log:false, default:6, fmt:v=>v.toFixed(2), xable:true, tip:"Spectral extension of the source / emission line in Å. Used to compute the spectral integration."},
 
   Atmosphere:        {tab:"Strategy", label:"Atmosph. trans.", unit:"%", pct:true, min:0.1, max:1, step:0.01, log:false, default:1, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Atmospheric transmission (0–100 %). Affects signal but not detector noise."},
-  acquisition_time:  {tab:"Strategy", label:"Acq. time", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Total acquisition time [hours]. Divided by (exposure + readout) gives the number of frames."},
+  acquisition_time:  {tab:"Strategy", label:"Acquisition time", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Total acquisition time [hours]. Divided by (exposure + readout) gives the number of frames."},
   readout_time:      {tab:"Strategy", label:"Readout time", unit:"s", min:0, max:300, step:1, log:false, default:0, fmt:v=>v.toFixed(0), xable:true, tip:"Detector readout time between exposures [seconds]. Use 0 for MCPs or rolling shutters."},
   exposure_time:     {tab:"Strategy", label:"Exposure time", unit:"s", min:1, max:3005, step:1, log:false, default:50, fmt:v=>v.toFixed(0), xable:true, tip:"Individual frame exposure time [seconds]."},
   wavelength:        {tab:"Strategy", label:"Observed λ", unit:"nm", min:50, max:1000, step:0.1, log:false, default:200, fmt:v=>v.toFixed(1), xable:true, tip:"Observed wavelength in nm. Used for flux/photon conversion (drives the photon energy)."},
@@ -1557,21 +1677,21 @@ const PARAMS = {
   Collecting_area: {tab:"Instrument", label:"Collect. area", unit:"m²", min:-2, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Physical collecting area of the instrument in m²."},
   pixel_scale:     {tab:"Instrument", label:"Pixel scale", unit:"\"/pix", min:0.01, max:5, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Pixel plate scale in arcseconds per pixel."},
   Throughput:      {tab:"Instrument", label:"Throughput", unit:"%", pct:true, min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Instrument throughput at the effective wavelength, excluding QE and atmosphere (0–100 %)."},
-  PSF_RMS_mask:    {tab:"Instrument", label:"Mask σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial PSF RMS (sigma) at the slit/mask, in arcseconds. Multiply by 2.35 to get the FWHM. Drives slit losses."},
-  PSF_RMS_det:     {tab:"Instrument", label:"Det σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial PSF RMS (sigma) at the detector, in arcseconds. Drives the resolution element size."},
+  PSF_RMS_det:     {tab:"Instrument", label:"PSF at detector (σ)", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial PSF RMS (sigma) at the detector, in arcseconds. Drives the resolution element size."},
+  PSF_RMS_mask: { tab: "Instrument", label: "PSF at mask/slice (σ)", unit: "\"", min: 0.01, max: 6, step: 0.01, log: false, default: 1, fmt: v => v.toFixed(2), xable: true, tip: "Spatial PSF RMS (sigma) at the slit/mask, in arcseconds. Multiply by 2.35 to get the FWHM. Drives slit losses." },
   Throughput_FWHM: {tab:"Instrument", label:"TH FWHM (imager)", unit:"Å", min:1, max:5, step:0.01, log:true, default_log:2, fmt:v=>v.toFixed(2), xable:false, tip:"Instrument throughput FWHM in Å (imager mode only). If a per-instrument λ-dependent throughput exists, it is used instead."},
 
   Spectral_resolution: {tab:"Spectrograph", label:"R = λ/Δλ (FWHM)", unit:"", min:90, max:10000, step:1, log:false, default:1000, fmt:v=>v.toFixed(0), xable:true, tip:"Spectral resolution R = λ/Δλ."},
-  Slitwidth:           {tab:"Spectrograph", label:"Slit width", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true, tip:"Width of the slit / slicer / fiber in arcseconds. Same value as length for a circular fiber."},
-  Slitlength:          {tab:"Spectrograph", label:"Slit length", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true, tip:"Length of the slit / slicer / fiber in arcseconds. Same value as width for a circular fiber."},
+  Slitwidth:           {tab:"Spectrograph", label:"Slit width", unit:"\"", min:-3, max:2.78, step:0.01, log:true, default_log:0, fmt:v=>v.toFixed(3), xable:true, tip:"Width of the slit / slicer / fiber in arcseconds. Same value as length for a circular fiber."},
+  Slitlength:          {tab:"Spectrograph", label:"Slit length", unit:"\"", min:-3, max:2.78, step:0.01, log:true, default_log:0, fmt:v=>v.toFixed(3), xable:true, tip:"Length of the slit / slicer / fiber in arcseconds. Same value as width for a circular fiber."},
   dispersion:          {tab:"Spectrograph", label:"Dispersion", unit:"Å/pix", min:0.01, max:5, step:0.001, log:false, default:0.5, fmt:v=>v.toFixed(3), xable:true, tip:"Dispersion at the detector in Å per pixel."},
   Bandwidth:           {tab:"Spectrograph", label:"Bandwidth", unit:"Å", min:1, max:5000, step:1, log:false, default:200, fmt:v=>v.toFixed(0), xable:true, tip:"Total spectrograph bandwidth in Å."},
 
-  QE:                      {tab:"Detector", label:"QE", unit:"%", pct:true, min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Detector quantum efficiency (0–100 %)."},
+  QE:                      {tab:"Detector", label:"Quantum eff.", unit:"%", pct:true, min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Detector quantum efficiency (0–100 %)."},
   RN:                      {tab:"Detector", label:"Read noise", unit:"e-/pix", min:0.01, max:120, step:0.1, log:false, default:2, fmt:v=>v.toFixed(2), xable:true, tip:"Detector read noise in electrons/pixel/frame. For EMCCDs this is the raw RN before EM-gain division."},
   Dark_current:            {tab:"Detector", label:"Dark current", unit:"e-/pix/h", min:0, max:50, step:0.001, log:false, default:0.1, fmt:v=>v.toFixed(3), xable:true, tip:"Detector dark current in electrons/pixel/hour."},
   extra_background:        {tab:"Detector", label:"Extra background", unit:"e-/pix/h", min:0, max:200, step:0.1, log:false, default:0, fmt:v=>v.toFixed(2), xable:true, tip:"Additional background on the detector (straylight, leaks…) in electrons/pixel/hour."},
-  cosmic_ray_loss_per_sec: {tab:"Detector", label:"CR loss", unit:"/s", min:0, max:0.1, step:0.0001, log:false, default:0, fmt:v=>v.toFixed(4), xable:true, tip:"Fraction of pixels lost per second due to cosmic-ray impacts. E.g. 0.01 means a 1s frame loses 1% of pixels."},
+  cosmic_ray_loss_per_sec: {tab:"Detector", label:"Cosmic ray loss", unit:"%/s", pct:true, min:0, max:0.1, step:0.0001, log:false, default:0, fmt:v=>(v*100).toFixed(2), xable:true, tip:"Fraction of pixels lost per second due to cosmic-ray impacts (0–100 %/s). E.g. 0.01 means a 1s frame loses 1% of pixels."},
   EM_gain:                 {tab:"Detector", label:"EM gain", unit:"e-/e-", min:1, max:3500, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true, tip:"EMCCD amplification gain (e-/e-). Set to 1 for non-EMCCD detectors."},
   CIC_charge:              {tab:"Detector", label:"CIC charge", unit:"e-/pix", min:0, max:0.07, step:0.001, log:false, default:0.001, fmt:v=>v.toFixed(4), xable:true, tip:"Clock-induced charges per pixel per frame (EMCCD spurious charges from the amplification register)."},
 };
@@ -1599,6 +1719,13 @@ const IMG_FLAGS = {
 
 // Loaded from data/spectra.json at startup
 let SPECTRA_DATA = null;
+
+// ---- Emission datacube support ------------------------------------------------
+// Set to false to completely disable cube loading and hide cube options in the UI.
+const EMISSION_CUBES_ENABLED = true;
+
+let CUBE_INDEX = null;   // loaded from data/cubes/index.json  { key: {label, file, shape, wave_min, wave_max, …} }
+const CUBE_CACHE = {};   // key → Float32Array (lazy-loaded on first use)
 
 // Parameter coupling formulas — when active, the LHS is derived from the RHS and its slider is hidden.
 // Each entry: {key: target param, label: display, deps: [param names used], compute: (v)=>value}
@@ -1734,7 +1861,20 @@ function buildUI(){
   root.selectAll("*").remove();
   GROUPS.forEach(group=>{
     const det = root.append("details").attr("class","acc").attr("open",true);
-    det.append("summary").text(group);
+    const summ = det.append("summary");
+    summ.append("span").text(group);
+    if (group === "Spectrograph"){
+      summ.append("label")
+        .attr("class","ifs-check")
+        .attr("title","Enable IFS mode (integral field spectrograph). Unlocks the IFS view tab.")
+        .on("click", e => e.stopPropagation())
+        .call(lbl => {
+          lbl.append("input").attr("type","checkbox").attr("id","cb-ifs-flag")
+            .property("checked", FLAGS.IFS)
+            .on("change", function(){ FLAGS.IFS = this.checked; updateIfsTabVisibility(); scheduleUpdate(); });
+          lbl.append("span").text("IFS");
+        });
+    }
     const body = det.append("div").attr("class","acc-body");
     for (const [k,p] of Object.entries(PARAMS)){
       if (p.tab!==group) continue;
@@ -1806,19 +1946,6 @@ function buildUI(){
           if (e.key === "Escape"){ node.textContent = p.fmt(STATE.values[k]); }
         });
         ni.addEventListener("blur", commit);
-      });
-    }
-    if (group === "Spectrograph"){
-      const fr = body.append("div").attr("class","flags-row");
-      const ifsLabel = fr.append("label")
-        .attr("class","check")
-        .attr("title","Enable IFS mode (integral field spectrograph). Unlocks the IFS view tab and switches to 3D cube SNR calculation.");
-      const ifsCb = ifsLabel.append("input").attr("type","checkbox").attr("id","cb-ifs-flag").property("checked", FLAGS.IFS);
-      ifsLabel.append("span").text(" IFS");
-      ifsCb.on("change", function(){
-        FLAGS.IFS = this.checked;
-        updateIfsTabVisibility();
-        scheduleUpdate();
       });
     }
   });
@@ -2075,11 +2202,15 @@ function buildImageOptionsUI(){
     "What to render: noisy simulated detector image, the noiseless source, the convolved source, or a per-pixel SNR map.");
 
   // Spectrum
-  const spectraNames = ["Baseline emission line"].concat(SPECTRA_DATA ? Object.keys(SPECTRA_DATA.spectra) : []);
+  const spectraNames = ["Baseline emission line"]
+    .concat(SPECTRA_DATA ? Object.keys(SPECTRA_DATA.spectra) : [])
+    .concat(EMISSION_CUBES_ENABLED && CUBE_INDEX
+      ? Object.entries(CUBE_INDEX).map(([k, m]) => CUBE_KEY_PREFIX + k)
+      : []);
   const specRow = dropdown("Spectrum", "img-spec",
     spectraNames, IMG_FLAGS.spectrum,
-    v => { IMG_FLAGS.spectrum = v; updateImgDependentUI(); },
-    "Source spectrum. \"Baseline emission line\" = Gaussian centred on the observed λ. Other entries are real SEDs (QSO HST/FOS, COSMOS galaxies, Salvato QSO templates) resampled at bake-time.");
+    v => { IMG_FLAGS.spectrum = v; updateImgDependentUI(); scheduleUpdate(); },
+    "Source spectrum. \"Baseline emission line\" = Gaussian. SEDs = baked templates. \"Cube: …\" = emission datacube (spatial × spectral, lazy-loaded ~19 MB).");
   attachCsvLoader("img-spec", specRow, [
     "Source spectrum — expected format:",
     "2 columns: wavelength, flux  (header row optional)",
@@ -2352,11 +2483,13 @@ function drawPlot(res){
       g.append("path").datum(s.y).attr("fill","none").attr("stroke",s.color).attr("stroke-width",5.0)
         .attr("d", lineGen(x, p0, xScale, allY0, ylog, LOCK_AXES.active ? LOCK_AXES.snrY[0] : null));
     });
-    g.append("path").datum(quadSum).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",6.5).attr("stroke-opacity",0.7)
+    const quadColor = cssVar("--plot-curve","#000");
+    g.append("path").datum(quadSum).attr("fill","none").attr("stroke", quadColor).attr("stroke-width",2.5)
+      .attr("stroke-dasharray","6,3")
       .attr("d", lineGen(x, p0, xScale, allY0, ylog, LOCK_AXES.active ? LOCK_AXES.snrY[0] : null));
     legendBlock(g, p0, [
       ...noiseSeries.map(s=>({name:`${s.name}: ${fmtNum(s.y[iCur])}`, color:s.color})),
-      {name:`Quad sum: ${fmtNum(quadSum[iCur])}`, color:"#000"}
+      {name:`Quad sum: ${fmtNum(quadSum[iCur])}`, color:quadColor, dashed:true}
     ]);
   }, LOCK_AXES.active ? LOCK_AXES.snrY[0] : null);
   if (LOCK_AXES.active && !LOCK_AXES.snrY[0]) LOCK_AXES.snrY[0] = dom0;
@@ -2383,12 +2516,14 @@ function drawPlot(res){
   const sbVal   = sbArr[iCur];
   const snrCur = isFinite(res.SNR[iCur]) ? res.SNR[iCur] : NaN;
   const snrMax = d3.max(res.SNR.filter(isFinite));
-  // Pixel breakdown label: show spat × spec for spectrograph modes, total for imager
-  const _ps = res.pix_spat[iCur], _pl = res.pix_spec[iCur];
+  // Pixel breakdown: nx × nλ (× ny if IFS) for spectrograph; total for imager; nothing for per pix.
+  const _ps = res.pix_spat[iCur], _pl = res.pix_spec[iCur], _pny = res.pix_ny[iCur];
   const _fmtPix = v => isFinite(v) ? Math.round(v).toString() : "—";
   const _pixInfo = (snrMode === "per pix") ? ""
     : FLAGS.spectrograph
-      ? ` [${_fmtPix(_ps)} spat × ${_fmtPix(_pl)} spec pix]`
+      ? (_pny > 1
+          ? ` [${_fmtPix(_ps)} nx × ${_fmtPix(_pl)} nλ × ${_fmtPix(_pny)} ny pix]`
+          : ` [${_fmtPix(_ps)} nx × ${_fmtPix(_pl)} nλ pix]`)
       : ` [${_fmtPix(res.number_pixels_used[iCur])} pix]`;
   const snrTitle = `SNR ${isFinite(snrCur)?snrCur.toFixed(2):"—"} (max ${snrMax!=null?snrMax.toFixed(2):"—"})${_pixInfo}\nSB(5σ,${sbLabel}) ${isFinite(sbVal)?sbVal.toFixed(2):"—"} log[erg/cm²/s/asec²]`;
   const dom2 = drawStackPanel(svg, p2, x, xScale, snrStack, max2, ylog, "SNR contributions", iCur,
@@ -2427,7 +2562,7 @@ function drawPlot(res){
       title: "Noise (e-/exp)",
       series: [
         ...noiseSeries.map(s=>({name:s.name, color:s.color, ys:s.y})),
-        {name:"Quad sum", color:"#000", ys:quadSum}
+        {name:"Quad sum", color:cssVar("--plot-curve","#000"), ys:quadSum}
       ]
     },
     {
@@ -2677,8 +2812,16 @@ function legendBlock(g, panel, items, title){
     y += 13;
   }
   for (const it of items){
-    g.append("rect").attr("x", x0 + padX).attr("y", y - 8).attr("width", swatchW).attr("height", swatchW)
-      .attr("fill", it.color).attr("fill-opacity", it.alpha!=null?it.alpha:0.85);
+    if (it.dashed){
+      g.append("line")
+        .attr("x1", x0 + padX).attr("y1", y - 3)
+        .attr("x2", x0 + padX + swatchW).attr("y2", y - 3)
+        .attr("stroke", it.color).attr("stroke-width", 2.5)
+        .attr("stroke-dasharray", "3,2");
+    } else {
+      g.append("rect").attr("x", x0 + padX).attr("y", y - 8).attr("width", swatchW).attr("height", swatchW)
+        .attr("fill", it.color).attr("fill-opacity", it.alpha!=null?it.alpha:0.85);
+    }
     g.append("text").attr("x", x0 + padX + swatchW + swatchGap).attr("y", y + 1).attr("class","legend").text(it.name);
     y += lineH;
   }
@@ -3387,6 +3530,89 @@ const IFS_STATE = {
   lambda_center: null    // Å — null = use middle of the detector spectral range
 };
 
+/* Shared helper: build the 1D spaxel-direction PSF (sum-normalised) used by all IFS cube builders. */
+function _ifsSpaxelPsf(pa, n3){
+  const sigma_x_spx = Math.max(0.3, Math.sqrt(pa.Size_source**2 + pa.PSF_RMS_det**2) / Math.max(0.001, pa.Slitwidth));
+  const cx = n3 / 2;
+  const psf = new Float64Array(n3);
+  let s = 0;
+  for (let k=0;k<n3;k++){ const dx=(k-cx)/sigma_x_spx; psf[k]=Math.exp(-0.5*dx*dx); s+=psf[k]; }
+  if (s>0) for (let k=0;k<n3;k++) psf[k]/=s;
+  return psf;
+}
+
+/* Source mode: noiseless cube, no Poisson. convolved=false → raw source × spaxel PSF.
+   convolved=true  → additionally bin by slicer width (matches Observation.py "Convolved source"). */
+function buildIfsCubeSource(sim, pa, n3, convolved){
+  const H=sim.H, W=sim.W;
+  const cube = new Float64Array(H*W*n3);
+  const spatPsf1D = _ifsSpaxelPsf(pa, n3);
+
+  // Fill noiseless signal
+  for (let j=0;j<H;j++)
+    for (let k=0;k<n3;k++)
+      for (let i=0;i<W;i++)
+        cube[(j*W+i)*n3+k] = Math.max(0, sim.source[j*W+i]) * spatPsf1D[k];
+
+  if (!convolved) return cube;
+
+  // Convolved: bin along the spaxel axis by reduction = Slitwidth/pixel_scale (same as Observation.py)
+  const reduction = Math.max(1, pa.Slitwidth / pa.pixel_scale);
+  const newN3 = Math.max(1, Math.floor(n3 / reduction));
+  const binned = new Float64Array(H * W * newN3);
+  for (let j=0;j<H;j++){
+    for (let i=0;i<W;i++){
+      for (let b=0;b<newN3;b++){
+        let s=0, cnt=0;
+        const k0=Math.floor(b*reduction), k1=Math.min(n3, Math.floor((b+1)*reduction));
+        for (let k=k0;k<k1;k++){ s+=cube[(j*W+i)*n3+k]; cnt++; }
+        binned[(j*W+i)*newN3+b] = cnt>0 ? s/cnt : 0;
+      }
+    }
+  }
+  // Repack into original n3 layout (repeat bins) so callers see same shape
+  const out = new Float64Array(H*W*n3);
+  for (let j=0;j<H;j++)
+    for (let i=0;i<W;i++)
+      for (let k=0;k<n3;k++){
+        const b = Math.min(newN3-1, Math.floor(k/reduction));
+        out[(j*W+i)*n3+k] = binned[(j*W+i)*newN3+b];
+      }
+  return out;
+}
+
+/* SNR mode: per-voxel SNR = signal / sqrt(signal + bg + RN²).
+   stack=true multiplies SNR by sqrt(N_stack). */
+function buildIfsCubeSNR(sim, pa, n3, stack){
+  const H=sim.H, W=sim.W;
+  const cube = new Float64Array(H*W*n3);
+  const spatPsf1D = _ifsSpaxelPsf(pa, n3);
+  const skyRate  = sim.sky_e_per_pix_per_exp;
+  const darkRate = sim.dark_per_pix_per_exp;
+  const extraRate= sim.extra_per_pix_per_exp;
+  const RN       = pa.RN;
+  const Nst      = sim.N_stack;
+  const sqrtNst  = (stack && Nst>0) ? Math.sqrt(Nst) : 1;
+
+  const slitLen_px = pa.Slitlength / pa.pixel_scale;
+  const jSlitLo = Math.max(0, Math.floor(H/2 - slitLen_px/2));
+  const jSlitHi = Math.min(H, Math.ceil(H/2 + slitLen_px/2));
+
+  for (let j=0;j<H;j++){
+    const inSlit = (j>=jSlitLo && j<jSlitHi);
+    for (let k=0;k<n3;k++){
+      const sp = spatPsf1D[k];
+      for (let i=0;i<W;i++){
+        const sig = Math.max(0, sim.source[j*W+i]) * sp;
+        const bg  = (inSlit ? skyRate : 0) + darkRate + extraRate;
+        const noise2 = sig + bg + RN*RN;
+        cube[(j*W+i)*n3+k] = noise2>0 ? sig/Math.sqrt(noise2) * sqrtNst : 0;
+      }
+    }
+  }
+  return cube;
+}
+
 /* Build an IFS cube matching Python's approach:
    - The noiseless source signal per voxel (j, i, k) = sim.source[j,i] * spatPsf1D[k]
      where spatPsf1D is a 1D Gaussian in the spaxel direction (sum-normalised to 1).
@@ -3410,7 +3636,7 @@ function buildIfsCubeFromModel(sim, pa, n3, seed, stack){
   const EM_gain   = pa.EM_gain;
   const CIC       = pa.CIC_charge;
   const RN        = pa.RN;
-  const Nst       = Math.max(1, sim.N_stack);
+  const Nst       = sim.N_stack;
 
   // 1D spaxel-direction PSF (sum-normalised so Σ_k = 1)
   const sigma_x_spx = Math.max(0.3, Math.sqrt(pa.Size_source*pa.Size_source + pa.PSF_RMS_det*pa.PSF_RMS_det) / Math.max(0.001, pa.Slitwidth));
@@ -3440,21 +3666,25 @@ function buildIfsCubeFromModel(sim, pa, n3, seed, stack){
         const sourceRate = Math.max(0, sim.source[j*W + i]) * sp;
         // λ-dependent voxel rate
         const lam = (stack ? (sourceRate + bg)*Nst : sourceRate + bg);
-        let s = pois(lam);
-        if (EM_gain > 1){
-          // CIC over (1 or N) frames
-          if (stack){
-            const cic_sum = pois(CIC * Nst);
-            if (s + cic_sum > 0) s = gam(s + cic_sum, EM_gain) / Nst;
-            else s = 0;
-          } else {
-            if (rng() < CIC) s += 1;
-            if (s > 0) s = gam(s, EM_gain);
-          }
+        let s;
+        if (stack && Nst <= 0){
+          s = 0;
         } else {
-          if (stack) s = s / Nst;
+          s = pois(lam);
+          if (EM_gain > 1){
+            if (stack){
+              const cic_sum = pois(CIC * Nst);
+              if (s + cic_sum > 0) s = gam(s + cic_sum, EM_gain) / Nst;
+              else s = 0;
+            } else {
+              if (rng() < CIC) s += 1;
+              if (s > 0) s = gam(s, EM_gain);
+            }
+          } else {
+            if (stack) s = s / Nst;
+          }
+          s += norm(0, stack ? RN/Math.sqrt(Nst) : RN);
         }
-        s += norm(0, stack ? RN/Math.sqrt(Nst) : RN);
         cube[(j*W + i)*n3 + k] = s;
       }
     }
@@ -3525,11 +3755,27 @@ function drawIfsView(){
   // Cap n3 to keep the cube tractable (cap is purely a UI/memory limit, not physical)
   n3 = Math.min(n3, 80);
 
-  // Build cubes from a separable PSF × spectrum model + per-voxel noise.
-  // Previously we did np.repeat(im, n3) which made every n3-slice = the 2D detector image;
-  // a λ-slice of that cube was a 1D spectrum repeated, not a 2D PSF.
-  const cube  = buildIfsCubeFromModel(sim, pa, n3, pa.seed^0xA5A5, /*stack*/false);
-  const cubeK = buildIfsCubeFromModel(sim, pa, n3, pa.seed^0x5A5A, /*stack*/true);
+  // Build cubes — mode-aware (mirrors Observation.py source_image handling)
+  const ifsMode = IMG_FLAGS.source_im || "Sim image";
+  let cube, cubeK;
+
+  if (ifsMode === "Source"){
+    // Noiseless source, no PSF convolution beyond what sim.source already has
+    cube  = buildIfsCubeSource(sim, pa, n3, /*convolved*/false);
+    cubeK = cube;
+  } else if (ifsMode === "Convolved source"){
+    // Source convolved with spaxel PSF + slicer binning, no noise
+    cube  = buildIfsCubeSource(sim, pa, n3, /*convolved*/true);
+    cubeK = cube;
+  } else if (ifsMode === "SNR"){
+    // Per-voxel SNR map: signal / sqrt(signal + bg + RN²)
+    cube  = buildIfsCubeSNR(sim, pa, n3, /*stack*/false);
+    cubeK = buildIfsCubeSNR(sim, pa, n3, /*stack*/true);
+  } else {
+    // "Sim image" — full Poisson + EMCCD + RN realisation
+    cube  = buildIfsCubeFromModel(sim, pa, n3, pa.seed^0xA5A5, /*stack*/false);
+    cubeK = buildIfsCubeFromModel(sim, pa, n3, pa.seed^0x5A5A, /*stack*/true);
+  }
   IFS_STATE.cube = cube; IFS_STATE.cube_stack = cubeK;
   IFS_STATE.H = sim.H; IFS_STATE.W = sim.W; IFS_STATE.n3 = n3;
   IFS_STATE.wavelengths = sim.wavelengths;
@@ -3888,11 +4134,9 @@ function setView(view){
 
 /* Show/hide the IFS tab depending on the current instrument's dimensions column. */
 function updateIfsTabVisibility(){
-  const d = STATE.instruments && STATE.current_instrument ? STATE.instruments.dict[STATE.current_instrument] : null;
-  const isIFS = !!d && (d.dimensions === 3 || d.IFS === 1 || d.IFS === true);
+  const isIFS = FLAGS.IFS;
   const tab = document.getElementById("view-tab-ifs");
   if (tab) tab.style.display = isIFS ? "" : "none";
-  // If currently in IFS view but instrument changed to non-IFS, fall back to SNR
   if (!isIFS && STATE.view === "ifs") setView("snr");
 }
 
@@ -3987,6 +4231,75 @@ async function loadSpectraData(){
     .text("⚠ Could not load spectra.js — the Spectrum dropdown will only show 'Baseline emission line'.");
 }
 
+async function loadCubeIndex(){
+  if (!EMISSION_CUBES_ENABLED) return;
+  // First preference: global set by data/cubes/index.js (works on file:// too)
+  if (typeof window !== "undefined" && window.CUBE_INDEX_BAKED){
+    CUBE_INDEX = window.CUBE_INDEX_BAKED;
+    console.log(`Loaded cube index (baked): ${Object.keys(CUBE_INDEX).length} cubes`);
+    return;
+  }
+  // Fallback: fetch JSON
+  const candidates = ["data/cubes/index.json", "./data/cubes/index.json", "/etc-app/data/cubes/index.json"];
+  for (const url of candidates){
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      CUBE_INDEX = await r.json();
+      console.log(`Loaded cube index: ${Object.keys(CUBE_INDEX).length} cubes`);
+      return;
+    } catch(e){ /* try next */ }
+  }
+  console.warn("Could not load cube index — emission cubes unavailable.");
+}
+
+/* Lazy-load one cube binary.  Returns Float32Array(nz×ny×nx) or null on error. */
+async function loadCube(key){
+  if (!EMISSION_CUBES_ENABLED || !CUBE_INDEX || !CUBE_INDEX[key]) return null;
+  if (CUBE_CACHE[key]) return CUBE_CACHE[key];
+  const meta = CUBE_INDEX[key];
+  const candidates = [
+    `data/cubes/${meta.file}`,
+    `./data/cubes/${meta.file}`,
+    `/etc-app/data/cubes/${meta.file}`,
+  ];
+  for (const url of candidates){
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const buf = await r.arrayBuffer();
+      const arr = new Float32Array(buf);
+      CUBE_CACHE[key] = arr;
+      console.log(`Loaded cube "${key}" (${(buf.byteLength/1024/1024).toFixed(1)} MB)`);
+      return arr;
+    } catch(e){ /* try next */ }
+  }
+  console.warn(`Failed to load cube "${key}"`);
+  return null;
+}
+
+/* Prefix used in the spectrum dropdown to distinguish cube entries from SEDs. */
+const CUBE_KEY_PREFIX = "Cube: ";
+
+/* Rebuild the <select> option list after cubes arrive. */
+function refreshSpectrumDropdown(sel){
+  if (!sel) return;
+  // Collect existing option values
+  const existing = new Set(Array.from(sel.options).map(o => o.value));
+  // Add cube options that are not yet present
+  if (EMISSION_CUBES_ENABLED && CUBE_INDEX){
+    for (const [key, meta] of Object.entries(CUBE_INDEX)){
+      const val = CUBE_KEY_PREFIX + key;
+      if (!existing.has(val)){
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = `Cube: ${meta.label}`;
+        sel.appendChild(opt);
+      }
+    }
+  }
+}
+
 /* ============================================================================
    THEME / DARK MODE
    ============================================================================ */
@@ -4023,6 +4336,7 @@ async function main(){
   document.body.setAttribute("data-spectro", FLAGS.spectrograph ? "true" : "false");
   initValuesToDefault();
   await loadSpectraData();
+  await loadCubeIndex();
   buildUI();
   buildDependencyUI();
   buildImageOptionsUI();

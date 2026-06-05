@@ -1,0 +1,67 @@
+{
+  "lya_cube_merged_with_artificial_source_CU_1pc_resampled": {
+    "label": "Lya CGM + artificial source",
+    "file": "lya_cube_merged_with_artificial_source_CU_1pc_resampled.bin",
+    "shape": [
+      500,
+      100,
+      100
+    ],
+    "wave_min": 184.6,
+    "wave_max": 219.53,
+    "wave_n": 500,
+    "spatial_arcsec": 15000.0
+  },
+  "CGM_cube_resampled": {
+    "label": "CGM cube",
+    "file": "CGM_cube_resampled.bin",
+    "shape": [
+      500,
+      100,
+      100
+    ],
+    "wave_min": 188.0,
+    "wave_max": 221.932,
+    "wave_n": 500,
+    "spatial_arcsec": 15000.0
+  },
+  "galaxy_disk_cube_resampled": {
+    "label": "Galaxy disk",
+    "file": "galaxy_disk_cube_resampled.bin",
+    "shape": [
+      500,
+      100,
+      100
+    ],
+    "wave_min": 187.5,
+    "wave_max": 222.43,
+    "wave_n": 500,
+    "spatial_arcsec": 15000.0
+  },
+  "galaxy_and_cgm_cube_resampled": {
+    "label": "Galaxy + CGM",
+    "file": "galaxy_and_cgm_cube_resampled.bin",
+    "shape": [
+      500,
+      100,
+      100
+    ],
+    "wave_min": 286.75,
+    "wave_max": 293.237,
+    "wave_n": 500,
+    "spatial_arcsec": 9550.0
+  },
+  "cube_01_resampled": {
+    "label": "cube_01",
+    "file": "cube_01_resampled.bin",
+    "shape": [
+      500,
+      100,
+      100
+    ],
+    "wave_min": 286.75,
+    "wave_max": 293.237,
+    "wave_n": 500,
+    "spatial_arcsec": 9550.0
+  }
+}

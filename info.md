@@ -10,14 +10,14 @@ Accuracy is sufficient for trade studies, design exploration, instrument compari
 
 ![SNR view with parameter panel](images/full_screen_tab1_and_params.jpg)
 
-*Figure 1 — The SNR view. Left: four stacked panels (noise budget, contributions, SNR contributions and SNR=5 surface-brightness limit) as a function of any selected parameter. Right: collapsible parameter accordions (Source, Strategy, Instrument, Spectrograph, Detector). The vertical dashed cursor on each panel is draggable and updates the current parameter value.*
+*Figure 1 — The SNR view. Left: three stacked panels (noise budget, contribution stack, SNR contribution stack) as a function of any selected parameter. The SNR=5 surface-brightness limit is annotated in the legend of panel 3. Right: collapsible parameter accordions (Source, Strategy, Instrument, Spectrograph, Detector). The vertical dashed cursor on each panel is draggable and updates the current parameter value.*
 
 ## 2 · Quick start {#quickstart}
 
 1. Pick an instrument in the **Instrument** dropdown of the top bar. The accordions below are populated automatically.
 2. Pick the parameter you want to vary in **X axis**. Equivalently, click on a parameter *label* in an accordion (the active x-axis is highlighted in orange).
 3. Pick an integration mode in **SNR** (per pixel, per resolution element, or per source — see [§5.2](#snr-modes)).
-4. The four SNR panels render in real time. **Drag the vertical dashed line** horizontally to set the current value of the swept parameter — the slider on the right syncs.
+4. The three SNR panels render in real time. **Drag the vertical dashed line** horizontally to set the current value of the swept parameter — the slider on the right syncs.
 5. Switch to **Spectro image** to see a simulated detector frame (single exposure and stack of `N_images_true` frames). Right-click + drag (or ctrl-click + drag on a Mac trackpad) on either image to bias/contrast the colormap, DS9-style. Double-click resets.
 6. For instruments declared as integral-field (`dimensions=3` in the sheet), an **IFS** view appears with two cube λ-slices and a draggable extraction box.
 
@@ -79,31 +79,31 @@ Every parameter usable as an x-axis can be inspected in two ways: its full name 
 
 | Group | Parameter | Symbol | Unit | Note |
 |---|---|---|---|---|
-| **Source** | Source flux | $F$ | erg/cm²/s/asec²/Å | Diffuse surface brightness |
-| | Sky background | $F_\text{sky}$ | erg/cm²/s/asec²/Å | Zodiacal + galactic / sky continuum |
-| | σ source | $\sigma_x$ | arcsec | Spatial RMS (Gaussian) |
-| | Equivalent width | $\sigma_\lambda$ | Å | Spectral RMS for the line model |
-| **Strategy** | Atmosphere | $A_\%$ | 0–1 | Scalar transmission |
-| | Acquisition time | $T_\text{tot}$ | h | Total wall-clock time |
+| **Source** | Flux | $F$ | erg/cm²/s/asec²/Å | Diffuse surface brightness |
+| | Sky brightness | $F_\text{sky}$ | erg/cm²/s/asec²/Å | Zodiacal + galactic / sky continuum |
+| | Spatial ext. (σ) | $\sigma_\text{src}$ | ″ | Source spatial RMS (Gaussian); 0 = point source |
+| | Line eq. width | $\sigma_\lambda$ | Å | Spectral equivalent width for line model |
+| **Strategy** | Atmosph. trans. | $A_\%$ | % | Scalar transmission (display: 0–100 %) |
+| | Acq. time | $T_\text{tot}$ | h | Total wall-clock time |
 | | Exposure time | $t_\text{exp}$ | s | Single frame |
 | | Readout time | $t_\text{RO}$ | s | Between frames |
 | | Observed λ | $\lambda$ | nm | Central wavelength |
 | | λ Stack | $N_\text{stack}^\lambda$ | pix | Spectral binning (imager only) |
-| **Instrument** | Collecting area | $A_\text{tel}$ | m² | After obstruction |
+| **Instrument** | Collect. area | $A_\text{tel}$ | m² | After obstruction |
 | | Pixel scale | $p$ | ″/pix | Plate scale |
-| | Throughput | $T_\%$ | 0–1 | Optics, excluding QE and atm |
+| | Throughput | $T_\%$ | % | Optics, excluding QE and atm (display: 0–100 %) |
 | | σ mask, σ det | $\sigma_\text{mask}, \sigma_\text{det}$ | arcsec | PSF RMS at slit / at detector |
 | | Throughput FWHM | $\Delta\lambda_T$ | Å | For imager-mode Gaussian shaping |
-| **Spectrograph** | Resolution | $R$ | — | $\lambda/\Delta\lambda$ |
-| | Slit width | $Sw$ | arcsec | Or slicer / fibre Ø |
-| | Slit length | $Sl$ | arcsec | Or slicer / fibre Ø (circular) |
+| **Spectrograph** | R = λ/Δλ (FWHM) | $R$ | — | Spectral resolving power |
+| | Slit width | $Sw$ | ″ | Or slicer / fibre Ø |
+| | Slit length | $Sl$ | ″ | Or slicer / fibre Ø (circular) |
 | | Dispersion | $d$ | Å/pix | At the detector |
 | | Bandwidth | $B$ | Å | Detector spectral coverage |
-| **Detector** | QE | $Q_\%$ | 0–1 | Quantum efficiency |
+| **Detector** | Quantum eff. | $Q_\%$ | % | Quantum efficiency (display: 0–100 %) |
 | | Read noise | RN | e⁻/pix | Before EM-gain division |
 | | Dark current | $D$ | e⁻/pix/h | |
 | | Extra background | $B_\text{extra}$ | e⁻/pix/h | Stray light, etc. |
-| | CR loss | CR | 1/s | Pixel-loss rate per second |
+| | Cosmic ray loss | CR | %/s | Pixel-loss rate per second (display: 0–100 %/s) |
 | | EM gain | $G$ | e⁻/e⁻ | EMCCD only; set to 1 elsewhere |
 | | CIC charge | CIC | e⁻/pix | Clock-induced charge per frame (EMCCD) |
 
@@ -129,6 +129,8 @@ $$\boxed{\;S_{e^-/\mathrm{pix}/\mathrm{exp}} \;=\; F_\text{CU}\;\mathcal{C}_\tex
 
 where $f_\text{slit}$ is the fraction of the source flux that passes the slit (see [§5.3](#snr-slit)).
 
+The factor $\mathcal{C}_\text{CU→e⁻}$ integrates over $\Omega_\text{src}$ — the *single-slicer* source footprint on the detector (spatial pixels along one slicer × spectral pixels). For IFS instruments, the number of slicers $n_3$ stays **outside** this factor; it enters only in the total pixel count $N_\text{pix}$ used for noise integration. Dividing by the full $n_3$-multiplied pixel count would artificially suppress the per-pixel signal in IFS mode.
+
 ### 5.2 SNR modes {#snr-modes}
 
 The integration footprint depends on the mode selected in the **SNR** dropdown:
@@ -137,8 +139,12 @@ The integration footprint depends on the mode selected in the **SNR** dropdown:
 |---|---|---|---|
 | per pix | $p^2$ | $d$ | Single detector pixel |
 | per Res elem | spatial PSF (px) × spectral PSF (px) | $\lambda/R$ | Standard resolution-element SNR |
-| per Source | Source × PSF spatial extent | $\min(\sigma_\lambda, B)$ | Whole source flux, all line |
-| per Source × 2λpix | Source × PSF spatial extent | Adaptive 2/4/8 px scaling with slicer width | IFS (KCWI-style extraction) |
+| per Source | $\sigma_\text{eff}$-clipped slit footprint | $\min(\sigma_\lambda, B)$ | Whole source flux, all line |
+| per Source × 2λpix | $\sigma_\text{eff}$-clipped slit footprint | Adaptive 2/4/8 px scaling with slicer width | IFS (KCWI-style extraction) |
+
+where $\sigma_\text{eff} = \sqrt{\sigma_\text{src}^{2}+\sigma_\text{det}^{2}}$ is the quadratic convolution of the source spatial extent with the detector-level PSF. For a point source ($\sigma_\text{src}=0$), $\sigma_\text{eff}=\sigma_\text{det}$ so the aperture never collapses to zero. The slit footprint used in the spatial direction is $\min(\sigma_\text{eff}\cdot f_\text{sr}, Sl)\times\min(\sigma_\text{eff}\cdot f_\text{sr}, Sw)$ arcsec², where $f_\text{sr}$ is the spatial-resolution oversampling factor.
+
+The title of panel 3 reports the pixel counts used for the current mode: `nx × nλ pix` for spectrographs, `nx × nλ × ny pix` when IFS slicers are active (ny = number of slicers).
 
 The integrated pixel count is then:
 
@@ -234,7 +240,9 @@ After download the spectrum is:
 
 We follow the Python ETC and keep the spatial / spectral / slit profiles *peak-normalised* (not sum-normalised):
 
-$$\phi_\text{spat}(j)=\exp\!\Bigl(-\tfrac{1}{2}\bigl((j-H/2)/\sigma_x\bigr)^{2}\Bigr), \quad \phi_\text{slit}(j) = \tfrac{1}{2}\bigl[\mathrm{erf}\!\cdot\bigr]\quad(\text{peak } 1)$$
+$$\phi_\text{spat}(j)=\exp\!\Bigl(-\tfrac{1}{2}\bigl((j-H/2)/\sigma_\text{eff}\bigr)^{2}\Bigr), \quad \phi_\text{slit}(j) = \tfrac{1}{2}\bigl[\mathrm{erf}\!\cdot\bigr]\quad(\text{peak } 1)$$
+
+with $\sigma_\text{eff}=\sqrt{\sigma_\text{src}^{2}+\sigma_\text{det}^{2}}$ so the spatial width represents the PSF-convolved source profile on the detector. When $\sigma_\text{src}=0$ (point source) the profile collapses to the detector PSF alone.
 
 The 2D source image is then built as the outer product, divided by the sum of a *narrower* reference Gaussian on each axis — the trick used in `SimulateFIREBallemCCDImage` to keep the source peak proportional to $S_\text{tot}/(2\pi\sigma_x\sigma_\lambda)$ regardless of the PSF width:
 
@@ -248,7 +256,9 @@ Each pixel of the single-exposure image is drawn from a compound process — Poi
 
 $$x[j,i]\;\sim\;\Gamma\!\bigl(\;\mathrm{Pois}(\lambda)+\mathrm{Bern}(\mathrm{CIC});\;G\;\bigr)\;+\;\mathcal N(0,\mathrm{RN})$$
 
-The PRNG is a small Mulberry32 + Box-Muller + Marsaglia-Tsang Gamma combination written in JS — fast enough to re-render a 500×100 image at every slider tick. The stacked image is the analytical mean of `N_stack` independent draws, with RN reduced by $\sqrt{N_\text{stack}}$.
+The PRNG is a small Mulberry32 + Box-Muller + Marsaglia-Tsang Gamma combination written in JS — fast enough to re-render a 500×100 image at every slider tick. The stacked image is the analytical mean of $N_\text{stack}$ independent draws, with RN reduced by $\sqrt{N_\text{stack}}$.
+
+$N_\text{stack} = \lfloor N_\text{img}\,(1-\mathrm{CR}) \rfloor$ — when cosmic-ray loss is high enough to destroy all frames, $N_\text{stack}=0$ and the stacked image shows **zero signal** (blank). This correctly reflects the fact that no usable data survives.
 
 ### 6.4 Sky gated by slit {#image-sky}
 
@@ -288,6 +298,7 @@ $$\text{spectrum}[i] \;=\; \dfrac{1}{(x_2-x_1)(y_2-y_1)}\; \sum_{j=y_1}^{y_2}\su
 
 This web port intentionally trades a few effects for portability and speed:
 
+- **Point sources** are handled by setting $\sigma_\text{src}=0$ in the *Spatial ext. (σ)* slider. The effective size $\sigma_\text{eff}=\sqrt{\sigma_\text{src}^{2}+\sigma_\text{det}^{2}}$ never collapses to zero, so the signal stabilises at the detector-PSF footprint rather than going to zero. All SNR, image, and IFS calculations use $\sigma_\text{eff}$ consistently.
 - EMCCD *smearing* (charge-transfer-efficiency tail) is not applied;
 - Cosmic-ray pixel *streaks* are not drawn (only the integrated pixel loss enters $N_\text{img}$);
 - Slicer edge losses and slice-to-slice throughput variations of real IFUs are not modelled — the cube is built from a separable PSF × spectrum;
