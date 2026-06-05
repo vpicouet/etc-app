@@ -4323,7 +4323,9 @@ function pickCubeFov(meta, detFov){
   const fovs = Object.keys(meta.fov_variants).map(Number).sort((a,b)=>a-b);
   if (!fovs.length) return null;
   // Pick smallest FOV that is >= detFov, or the largest if none qualifies
-  for (const f of fovs) if (f >= detFov) return String(f);
+  for (let fi = 0; fi < fovs.length; fi++){
+    if (fovs[fi] >= detFov) return String(fovs[fi]);
+  }
   return String(fovs[fovs.length-1]);
 }
 
