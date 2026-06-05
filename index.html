@@ -149,7 +149,8 @@
   button{font:12px var(--font-ui);padding:3px 8px;border:1px solid var(--line-strong);background:var(--panel);color:var(--text);
     border-radius:var(--radius-sm);cursor:pointer}
   button:hover{background:var(--bg-alt)}
-  .check{display:flex;align-items:center;gap:3px;font-size:11.5px;color:var(--text-soft)}
+  button.tog{padding:2px 6px;font-size:11px}
+  button.tog.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 
   /* Accordions */
   .acc{border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--panel)}
@@ -175,6 +176,8 @@
   /* Hide λ Stack row in SNR and Spectro image views (only meaningful in IFS) */
   body[data-view="snr"] #row-lambda_stack{display:none}
   body[data-view="img"] #row-lambda_stack{display:none}
+  /* Hide wavelength slider in SNR view (set by instrument; not meaningful to sweep here) */
+  body[data-view="snr"] #row-wavelength{display:none}
   /* Hide TH FWHM (imager-only) when the instrument is a spectrograph */
   body[data-spectro="true"] #row-Throughput_FWHM{display:none}
   /* Labels are only clickable as x-axis in SNR view */
@@ -366,19 +369,16 @@
     <div class="topbar">
       <div class="topbar-row">
         <label class="kv" title="Pick an instrument from the shared spreadsheet. Loads all its parameters into the sliders.">Instrument <select id="instrument"></select></label>
-        <label class="check" title="Use a logarithmic x-axis."><input type="checkbox" id="xlog" checked> xlog</label>
-        <label class="check" title="Use a logarithmic y-axis for noise and contribution panels."><input type="checkbox" id="ylog"> ylog</label>
-        <button id="reset" title="Reset all parameters to their default values (does not change the instrument).">↺</button>
-      </div>
-      <div class="topbar-row snr-only">
-        <label class="kv" title="Choose which parameter to vary along the x-axis. All other parameters are held fixed.">X axis <select id="xaxis"></select></label>
-        <label class="kv" title="SNR mode: per pixel, per resolution element, per source, or per source × 2 spectral pixels (IFS).">SNR per <select id="snr_res">
+        <button id="xlog" class="tog on" title="Logarithmic x-axis">xlog</button>
+        <button id="ylog" class="tog" title="Logarithmic y-axis">ylog</button>
+        <label class="kv snr-only" title="SNR mode: per pixel, per resolution element, per source, or per source × 2 spectral pixels (IFS).">SNR per <select id="snr_res">
           <option value="per pix" title="SNR computed over a single pixel.">pix</option>
           <option value="per Res elem" selected title="SNR computed over one resolution element (default).">Res elem</option>
           <option value="per Source" title="SNR computed over all pixels covered by the source.">Source</option>
-          <!-- <option value="per Source per 2λpix" title="IFS mode: integrate over the source × 2 adaptive spectral pixels (KCWI-like).">Source × 2λpix</option> -->
         </select></label>
+        <button id="reset" title="Reset all parameters to their default values (does not change the instrument).">↺</button>
       </div>
+      <select id="xaxis" hidden></select>
     </div>
 
     <details class="acc" id="img-opts-acc">
@@ -1316,27 +1316,56 @@ function computeObservation(p){
   for(let i=0;i<N;i++) PSF_lambda_pix[i] = 10*wavelength[i]/Spectral_resolution[i]/dispersion[i];
 
   const source_size = new Array(N), elem_size = new Array(N), pixels_total_source = new Array(N);
+  // pix_spat / pix_spec: spatial and spectral pixel counts for the active SNR mode (display only)
+  const pix_spat = new Array(N), pix_spec = new Array(N);
   for(let i=0;i<N;i++){
     if (spectro){
       const sspec = Math.max(1, Math.sqrt(PSF_lambda_pix[i]**2 + Math.pow(Math.min(Line_width[i],Bandwidth[i])/dispersion[i],2)));
-      source_size[i] = Math.max(Math.min(Size_source[i]*fsr, Slitlength[i])/pixel_scale[i], 1) * sspec;
-      pixels_total_source[i] = source_size[i] * (IFS ? Math.ceil(Math.sqrt(Size_source[i]**2+PSF_RMS_mask[i]**2)*fsr/Slitwidth[i]) : 1);
-      elem_size[i] = Math.ceil(Math.min(PSF_RMS_mask[i]*fsr, Slitlength[i])/pixel_scale[i]) *
-        Math.ceil(Math.sqrt(Math.min(PSF_RMS_det[i]/pixel_scale[i], PSF_lambda_pix[i])**2 + Math.min(Line_width[i]/dispersion[i], PSF_lambda_pix[i])**2)) *
-        (IFS ? Math.ceil(PSF_RMS_mask[i]*fsr/Slitwidth[i]) : 1);
+      const spat_src = Math.max(Math.min(Size_source[i]*fsr, Slitlength[i])/pixel_scale[i], 1);
+      source_size[i] = spat_src * sspec;
+      const nslices_src = IFS ? Math.ceil(Math.sqrt(Size_source[i]**2+PSF_RMS_mask[i]**2)*fsr/Slitwidth[i]) : 1;
+      pixels_total_source[i] = source_size[i] * nslices_src;
+      const spat_elem = Math.ceil(Math.min(PSF_RMS_mask[i]*fsr, Slitlength[i])/pixel_scale[i]);
+      const spec_elem = Math.ceil(Math.sqrt(Math.min(PSF_RMS_det[i]/pixel_scale[i], PSF_lambda_pix[i])**2 + Math.min(Line_width[i]/dispersion[i], PSF_lambda_pix[i])**2));
+      const nslices_elem = IFS ? Math.ceil(PSF_RMS_mask[i]*fsr/Slitwidth[i]) : 1;
+      elem_size[i] = spat_elem * spec_elem * nslices_elem;
+      // store components for the currently active mode (filled in section 4 below)
+      pix_spat[i] = spat_elem * nslices_elem;
+      pix_spec[i] = spec_elem;
     } else {
       source_size[i] = Math.pow(Size_source[i]*fsr/pixel_scale[i], 2);
       elem_size[i]   = Math.pow(PSF_RMS_det[i]*fsr/pixel_scale[i], 2);
       pixels_total_source[i] = source_size[i];
+      pix_spat[i] = Math.ceil(Math.sqrt(source_size[i]));
+      pix_spec[i] = Math.ceil(Math.sqrt(source_size[i]));
     }
   }
 
   // ## 4 — INTEGRATION MODE → N_pix (info.html §5.2) ########################
   let number_pixels_used = new Array(N);
-  if (SNR_res==="per pix") number_pixels_used.fill(1);
-  else if (SNR_res==="per Res elem") for(let i=0;i<N;i++) number_pixels_used[i] = Math.ceil(elem_size[i]);
-  else if (SNR_res==="per Source") for(let i=0;i<N;i++) number_pixels_used[i] = Math.ceil(pixels_total_source[i]);
-  else {
+  if (SNR_res==="per pix"){
+    number_pixels_used.fill(1);
+    for(let i=0;i<N;i++){ pix_spat[i]=1; pix_spec[i]=1; }
+  } else if (SNR_res==="per Res elem"){
+    for(let i=0;i<N;i++){
+      number_pixels_used[i] = Math.ceil(elem_size[i]);
+      // pix_spat/pix_spec already set to res-elem components above
+    }
+  } else if (SNR_res==="per Source"){
+    for(let i=0;i<N;i++){
+      number_pixels_used[i] = Math.ceil(pixels_total_source[i]);
+      if (spectro){
+        const sspec = Math.max(1, Math.sqrt(PSF_lambda_pix[i]**2 + Math.pow(Math.min(Line_width[i],Bandwidth[i])/dispersion[i],2)));
+        const spat_src = Math.max(Math.min(Size_source[i]*fsr, Slitlength[i])/pixel_scale[i], 1);
+        const nslices_src = IFS ? Math.ceil(Math.sqrt(Size_source[i]**2+PSF_RMS_mask[i]**2)*fsr/Slitwidth[i]) : 1;
+        pix_spat[i] = Math.ceil(spat_src * nslices_src);
+        pix_spec[i] = Math.ceil(sspec);
+      } else {
+        const side = Math.ceil(Size_source[i]*fsr/pixel_scale[i]);
+        pix_spat[i] = side; pix_spec[i] = side;
+      }
+    }
+  } else {
     if (spectro && IFS){
       for(let i=0;i<N;i++){
         const spatial_pix_per_slicer = Slitwidth[i]/pixel_scale[i];
@@ -1346,8 +1375,23 @@ function computeObservation(p){
         pixels_total_source[i] = pixels_spat_total * spectral_pix_adaptive;
         number_pixels_used[i] = pixels_total_source[i];
         source_size[i] = (pixels_spat_total/nslices) * spectral_pix_adaptive;
+        pix_spat[i] = Math.ceil(pixels_spat_total);
+        pix_spec[i] = Math.ceil(spectral_pix_adaptive);
       }
-    } else for(let i=0;i<N;i++) number_pixels_used[i] = Math.ceil(pixels_total_source[i]);
+    } else {
+      for(let i=0;i<N;i++){
+        number_pixels_used[i] = Math.ceil(pixels_total_source[i]);
+        if (spectro){
+          const sspec = Math.max(1, Math.sqrt(PSF_lambda_pix[i]**2 + Math.pow(Math.min(Line_width[i],Bandwidth[i])/dispersion[i],2)));
+          const spat_src = Math.max(Math.min(Size_source[i]*fsr, Slitlength[i])/pixel_scale[i], 1);
+          pix_spat[i] = Math.ceil(spat_src);
+          pix_spec[i] = Math.ceil(sspec);
+        } else {
+          const side = Math.ceil(Size_source[i]*fsr/pixel_scale[i]);
+          pix_spat[i] = side; pix_spec[i] = side;
+        }
+      }
+    }
   }
 
   // ## 5 — EXCESS NOISE FACTOR + DARK/CIC SHOT NOISE #######################
@@ -1481,6 +1525,7 @@ function computeObservation(p){
   return { x: p.xArr, N, noises_per_exp, noises, electrons_per_pix,
     Signal_el, Dark_current_f, sky, RN_final, CIC_charge, Additional_background,
     SNR, Total_noise_final, number_pixels_used, source_size, elem_size,
+    pix_spat, pix_spec,
     SB_lim_per_pix, SB_lim_per_res, SB_lim_per_source, factor, Signal_resolution };
 }
 
@@ -1488,32 +1533,32 @@ function computeObservation(p){
    3. PARAMETERS — grouped into accordions (NO "Image" group)
    ========================================================================== */
 const PARAMS = {
-  Signal:       {tab:"Source", label:"Source", unit:"erg/cm²/s/asec²/Å", min:-21, max:-9, step:0.1, log:true, default_log:-17, fmt:e=>e.toExponential(2), xable:true, tip:"Surface brightness of the diffuse source in erg/cm²/s/arcsec²/Å. Values >1 are interpreted as UV magnitudes and converted to flux."},
-  Size_source:  {tab:"Source", label:"σ source", unit:"\"", min:0.01, max:100, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial extension of the source (sigma) in arcseconds. Affects the number of pixels integrated over and aperture losses."},
-  Sky:          {tab:"Source", label:"Sky", unit:"erg/cm²/s/asec²/Å", min:-23, max:-15, step:0.1, log:true, default_log:-18, fmt:e=>e.toExponential(2), xable:true, tip:"Sky background illumination (zodiacal + galactic) in erg/cm²/s/arcsec²/Å."},
-  Line_width:   {tab:"Source", label:"Eq width", unit:"Å", min:0.01, max:100, step:0.1, log:false, default:6, fmt:v=>v.toFixed(2), xable:true, tip:"Spectral extension of the source / emission line in Å. Used to compute the spectral integration."},
+  Signal:       {tab:"Source", label:"Flux", unit:"erg/cm²/s/arcsec²/Å", min:-21, max:-9, step:0.1, log:true, default_log:-17, fmt:e=>e.toExponential(2), xable:true, tip:"Surface brightness of the diffuse source in erg/cm²/s/arcsec²/Å. Values >1 are interpreted as UV magnitudes and converted to flux."},
+  Size_source:  {tab:"Source", label:"Spatial ext. (σ)", unit:"\"", min:0.01, max:100, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial extension of the source (sigma) in arcseconds. Affects the number of pixels integrated over and aperture losses."},
+  Sky:          {tab:"Source", label:"Sky brightness", unit:"erg/cm²/s/arcsec²/Å", min:-23, max:-15, step:0.1, log:true, default_log:-18, fmt:e=>e.toExponential(2), xable:true, tip:"Sky background illumination (zodiacal + galactic) in erg/cm²/s/arcsec²/Å."},
+  Line_width:   {tab:"Source", label:"Line eq. width", unit:"Å", min:0.01, max:100, step:0.1, log:false, default:6, fmt:v=>v.toFixed(2), xable:true, tip:"Spectral extension of the source / emission line in Å. Used to compute the spectral integration."},
 
-  Atmosphere:        {tab:"Strategy", label:"Atmosphere", unit:"", min:0.1, max:1, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Atmospheric transmission (0–1). Affects signal but not detector noise."},
-  acquisition_time:  {tab:"Strategy", label:"Taq", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Total acquisition time [hours]. Divided by (exposure + readout) gives the number of frames."},
+  Atmosphere:        {tab:"Strategy", label:"Atmosph. trans.", unit:"%", pct:true, min:0.1, max:1, step:0.01, log:false, default:1, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Atmospheric transmission (0–100 %). Affects signal but not detector noise."},
+  acquisition_time:  {tab:"Strategy", label:"Acq. time", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Total acquisition time [hours]. Divided by (exposure + readout) gives the number of frames."},
   readout_time:      {tab:"Strategy", label:"Readout time", unit:"s", min:0, max:300, step:1, log:false, default:0, fmt:v=>v.toFixed(0), xable:true, tip:"Detector readout time between exposures [seconds]. Use 0 for MCPs or rolling shutters."},
   exposure_time:     {tab:"Strategy", label:"Exposure time", unit:"s", min:1, max:3005, step:1, log:false, default:50, fmt:v=>v.toFixed(0), xable:true, tip:"Individual frame exposure time [seconds]."},
   wavelength:        {tab:"Strategy", label:"Observed λ", unit:"nm", min:50, max:1000, step:0.1, log:false, default:200, fmt:v=>v.toFixed(1), xable:true, tip:"Observed wavelength in nm. Used for flux/photon conversion (drives the photon energy)."},
   lambda_stack:      {tab:"Strategy", label:"λ Stack", unit:"pix", min:1, max:200, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true, tip:"Number of spectral slices stacked (only used in imager mode). Forced to 1 for spectrographs."},
 
-  Collecting_area: {tab:"Instrument", label:"Area", unit:"m²", min:-2, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Physical collecting area of the instrument in m²."},
+  Collecting_area: {tab:"Instrument", label:"Collect. area", unit:"m²", min:-2, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Physical collecting area of the instrument in m²."},
   pixel_scale:     {tab:"Instrument", label:"Pixel scale", unit:"\"/pix", min:0.01, max:5, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Pixel plate scale in arcseconds per pixel."},
-  Throughput:      {tab:"Instrument", label:"Throughput", unit:"", min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>v.toFixed(2), xable:true, tip:"Instrument throughput at the effective wavelength (excludes detector QE and atmosphere)."},
+  Throughput:      {tab:"Instrument", label:"Throughput", unit:"%", pct:true, min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Instrument throughput at the effective wavelength, excluding QE and atmosphere (0–100 %)."},
   PSF_RMS_mask:    {tab:"Instrument", label:"Mask σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial PSF RMS (sigma) at the slit/mask, in arcseconds. Multiply by 2.35 to get the FWHM. Drives slit losses."},
   PSF_RMS_det:     {tab:"Instrument", label:"Det σ", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial PSF RMS (sigma) at the detector, in arcseconds. Drives the resolution element size."},
   Throughput_FWHM: {tab:"Instrument", label:"TH FWHM (imager)", unit:"Å", min:1, max:5, step:0.01, log:true, default_log:2, fmt:v=>v.toFixed(2), xable:false, tip:"Instrument throughput FWHM in Å (imager mode only). If a per-instrument λ-dependent throughput exists, it is used instead."},
 
-  Spectral_resolution: {tab:"Spectrograph", label:"R = λ/Δλ", unit:"", min:90, max:10000, step:1, log:false, default:1000, fmt:v=>v.toFixed(0), xable:true, tip:"Spectral resolution R = λ/Δλ."},
+  Spectral_resolution: {tab:"Spectrograph", label:"R = λ/Δλ (FWHM)", unit:"", min:90, max:10000, step:1, log:false, default:1000, fmt:v=>v.toFixed(0), xable:true, tip:"Spectral resolution R = λ/Δλ."},
   Slitwidth:           {tab:"Spectrograph", label:"Slit width", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true, tip:"Width of the slit / slicer / fiber in arcseconds. Same value as length for a circular fiber."},
   Slitlength:          {tab:"Spectrograph", label:"Slit length", unit:"\"", min:0.001, max:600, step:0.001, log:false, default:1, fmt:v=>v.toFixed(3), xable:true, tip:"Length of the slit / slicer / fiber in arcseconds. Same value as width for a circular fiber."},
   dispersion:          {tab:"Spectrograph", label:"Dispersion", unit:"Å/pix", min:0.01, max:5, step:0.001, log:false, default:0.5, fmt:v=>v.toFixed(3), xable:true, tip:"Dispersion at the detector in Å per pixel."},
   Bandwidth:           {tab:"Spectrograph", label:"Bandwidth", unit:"Å", min:1, max:5000, step:1, log:false, default:200, fmt:v=>v.toFixed(0), xable:true, tip:"Total spectrograph bandwidth in Å."},
 
-  QE:                      {tab:"Detector", label:"QE", unit:"", min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>v.toFixed(2), xable:true, tip:"Detector quantum efficiency (0–1)."},
+  QE:                      {tab:"Detector", label:"QE", unit:"%", pct:true, min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Detector quantum efficiency (0–100 %)."},
   RN:                      {tab:"Detector", label:"Read noise", unit:"e-/pix", min:0.01, max:120, step:0.1, log:false, default:2, fmt:v=>v.toFixed(2), xable:true, tip:"Detector read noise in electrons/pixel/frame. For EMCCDs this is the raw RN before EM-gain division."},
   Dark_current:            {tab:"Detector", label:"Dark current", unit:"e-/pix/h", min:0, max:50, step:0.001, log:false, default:0.1, fmt:v=>v.toFixed(3), xable:true, tip:"Detector dark current in electrons/pixel/hour."},
   extra_background:        {tab:"Detector", label:"Extra background", unit:"e-/pix/h", min:0, max:200, step:0.1, log:false, default:0, fmt:v=>v.toFixed(2), xable:true, tip:"Additional background on the detector (straylight, leaks…) in electrons/pixel/hour."},
@@ -1717,8 +1762,8 @@ function buildUI(){
         const cur = STATE.values[k];
         const ni = document.createElement("input");
         ni.type = "number";
-        ni.value = cur;
-        ni.step = p.log ? "any" : (p.step || "any");
+        ni.value = p.pct ? +(cur*100).toFixed(4) : cur;
+        ni.step = p.log ? "any" : (p.pct ? p.step*100 : p.step) || "any";
         Object.assign(ni.style, {
           width:"72px", fontSize:"inherit", background:"var(--bg)", color:"var(--text)",
           border:"1px solid var(--accent)", borderRadius:"3px", padding:"0 3px",
@@ -1730,10 +1775,11 @@ function buildUI(){
         function commit(){
           const raw = parseFloat(ni.value);
           if (isFinite(raw)){
-            // Clamp to the param's physical range (converted from log if needed)
+            // Clamp to the param's physical range (converted from log or pct if needed)
             const lo = p.log ? Math.pow(10, p.min) : p.min;
             const hi = p.log ? Math.pow(10, p.max) : p.max;
-            STATE.values[k] = Math.min(hi, Math.max(lo, raw));
+            const physical = p.pct ? raw / 100 : raw;
+            STATE.values[k] = Math.min(hi, Math.max(lo, physical));
             syncSlider(k);
             scheduleUpdate();
           }
@@ -2240,8 +2286,8 @@ function drawPlot(res){
   // Don't set width/height as attributes — let CSS control them. Just set viewBox + preserveAspectRatio.
   svg.attr("viewBox", `0 0 ${dim.w} ${dim.h}`).attr("preserveAspectRatio", "none");
   const xKey = STATE.xKey, x = res.x;
-  const xlog = document.getElementById("xlog").checked;
-  const ylog = document.getElementById("ylog").checked;
+  const xlog = document.getElementById("xlog").classList.contains("on");
+  const ylog = document.getElementById("ylog").classList.contains("on");
   const xmin = d3.min(x), xmax = d3.max(x);
   const xScale = (xlog && xmin>0)
     ? d3.scaleLog().domain([Math.max(xmin,1e-30), xmax]).range([0,1])
@@ -2307,7 +2353,14 @@ function drawPlot(res){
   const sbVal   = sbArr[iCur];
   const snrCur = isFinite(res.SNR[iCur]) ? res.SNR[iCur] : NaN;
   const snrMax = d3.max(res.SNR.filter(isFinite));
-  const snrTitle = `SNR ${isFinite(snrCur)?snrCur.toFixed(2):"—"} (max ${snrMax!=null?snrMax.toFixed(2):"—"})\nSB(5σ,${sbLabel}) ${isFinite(sbVal)?sbVal.toFixed(2):"—"} log[erg/cm²/s/asec²]`;
+  // Pixel breakdown label: show spat × spec for spectrograph modes, total for imager
+  const _ps = res.pix_spat[iCur], _pl = res.pix_spec[iCur];
+  const _fmtPix = v => isFinite(v) ? Math.round(v).toString() : "—";
+  const _pixInfo = (snrMode === "per pix") ? ""
+    : FLAGS.spectrograph
+      ? ` [${_fmtPix(_ps)} spat × ${_fmtPix(_pl)} spec pix]`
+      : ` [${_fmtPix(res.number_pixels_used[iCur])} pix]`;
+  const snrTitle = `SNR ${isFinite(snrCur)?snrCur.toFixed(2):"—"} (max ${snrMax!=null?snrMax.toFixed(2):"—"})${_pixInfo}\nSB(5σ,${sbLabel}) ${isFinite(sbVal)?sbVal.toFixed(2):"—"} log[erg/cm²/s/asec²]`;
   drawStackPanel(svg, p2, x, xScale, snrStack, max2, ylog, "SNR contributions", iCur,
     NAMES.map((n,j)=>({name:n, color:COLORS[j]})), (j)=>{
       const Tn = res.Total_noise_final[iCur];
@@ -2316,8 +2369,10 @@ function drawPlot(res){
 
   // x-axis label — bottom-right of the last panel, just above the x-axis line
   const lastP = panels[panels.length-1];
+  const _xp = PARAMS[xKey];
+  const _xLabel = _xp ? `${_xp.label}${_xp.unit ? ` [${_xp.unit}]` : ""}` : xKey;
   svg.append("text").attr("x", lastP.x + lastP.w - 8).attr("y", lastP.y + lastP.h - 6)
-    .attr("text-anchor","end").attr("class","ax-title").style("font-style","italic").text(`x: ${xKey}`);
+    .attr("text-anchor","end").attr("class","ax-title").style("font-style","italic").text(_xLabel);
 
   // Visible vertical line at the current value (the draggable hit zone is appended
   // AFTER the hover-tooltip rect below so it sits on top in z-order and actually catches mousedown).
@@ -2692,7 +2747,7 @@ function drawImageView(){
   const cvK = document.getElementById("cv-stack");
   const vminS = percentile(sim.single, 0.01), vmaxS = percentile(sim.single, 0.99);
   const vminK = percentile(sim.stack,  0.01), vmaxK = percentile(sim.stack,  0.99);
-  const ylog = document.getElementById("ylog").checked;
+  const ylog = document.getElementById("ylog").classList.contains("on");
   // Cache + apply bias/contrast (DS9-style)
   STATE.imgCache = {
     single: sim.single, stack: sim.stack, W: sim.W, H: sim.H, sim,
@@ -3206,7 +3261,7 @@ function drawHistogram(sim){
   const hK = buildHist(sim.stack,  vmin, vmax);
   const yMax = Math.max(d3.max(hS), d3.max(hK)) || 1;
 
-  const ylog = document.getElementById("ylog").checked;
+  const ylog = document.getElementById("ylog").classList.contains("on");
   const xs = d3.scaleLinear().domain([vmin, vmax]).range([m.l, W-m.r]);
   STATE._lastDomain["svg-hist"] = { used:[vmin, vmax], natural:[vminN, vmaxN], margin: m };
   attachSubplotZoom("svg-hist", ()=> drawHistogram(sim));
@@ -3776,7 +3831,7 @@ function doUpdate(){
   // Update SDSS search visibility (depends on wavelength + Bandwidth sliders)
   document.body.setAttribute("data-sdss-avail", detectorInSdssDomain() ? "true" : "false");
   const xKey = STATE.xKey, p = PARAMS[xKey]; if (!p) return;
-  const xlog = document.getElementById("xlog").checked;
+  const xlog = document.getElementById("xlog").classList.contains("on");
   const xa = p.log ? Math.pow(10, p.min) : p.min;
   const xb = p.log ? Math.pow(10, p.max) : p.max;
   const N = 60;
@@ -3912,8 +3967,11 @@ async function main(){
     d3.select("#status").classed("err",true).text("Failed to load sheet: "+e.message+" — using defaults.");
     console.error(e);
   }
-  document.getElementById("xlog").addEventListener("change", scheduleUpdate);
-  document.getElementById("ylog").addEventListener("change", scheduleUpdate);
+  ["xlog","ylog"].forEach(id => {
+    document.getElementById(id).addEventListener("click", function(){
+      this.classList.toggle("on"); scheduleUpdate();
+    });
+  });
   document.getElementById("snr_res").addEventListener("change", scheduleUpdate);
   document.getElementById("reset").addEventListener("click", ()=>{ initValuesToDefault(); for (const k of Object.keys(PARAMS)) syncSlider(k); scheduleUpdate(); });
   document.getElementById("reload").addEventListener("click", async ()=>{
