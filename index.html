@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <title>Generic ETC — SNR calculator</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d1117'/><polyline points='2,26 7,18 11,22 16,8 21,14 25,6 30,10' fill='none' stroke='%2358a6ff' stroke-width='2.5' stroke-linejoin='round' stroke-linecap='round'/></svg>">
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <!-- Baked spectra data — also accessible via fetch("data/spectra.json"). The .js wrapper lets file:// work. -->
 <script src="data/spectra.js"></script>
@@ -339,6 +340,7 @@
 <body>
 
 <div id="pixtip"></div>
+<button id="mob-params-btn" title="Toggle parameters">⚙️</button>
 
 <header>
   <h1>Generic ETC</h1>
@@ -4497,7 +4499,6 @@ document.getElementById("mob-params-btn").addEventListener("click", function(){
 });
 </script>
 
-<button id="mob-params-btn" title="Toggle parameters">⚙️</button>
 
 </body>
 </html>
