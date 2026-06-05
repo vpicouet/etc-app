@@ -1,12 +1,12 @@
 {
-  "lya_cube_merged_with_artificial_source_CU_1pc_resampled": {
+  "lya_cube_merged_with_artificial_source_CU_1pc": {
     "label": "Lya CGM + artificial source",
-    "wave_min": 184.6,
-    "wave_max": 219.53,
+    "wave_min": 202.844,
+    "wave_max": 205.159,
     "wave_n": 500,
     "fov_variants": {
       "30": {
-        "file": "lya_cube_merged_with_artificial_source_CU_1pc_resampled_30as.bin",
+        "file": "lya_cube_merged_with_artificial_source_CU_1pc_30as.bin",
         "shape": [
           500,
           100,
@@ -15,7 +15,7 @@
         "fov_arcsec": 30
       },
       "60": {
-        "file": "lya_cube_merged_with_artificial_source_CU_1pc_resampled_60as.bin",
+        "file": "lya_cube_merged_with_artificial_source_CU_1pc_60as.bin",
         "shape": [
           500,
           100,
@@ -24,7 +24,7 @@
         "fov_arcsec": 60
       },
       "120": {
-        "file": "lya_cube_merged_with_artificial_source_CU_1pc_resampled_120as.bin",
+        "file": "lya_cube_merged_with_artificial_source_CU_1pc_120as.bin",
         "shape": [
           500,
           100,
@@ -33,7 +33,7 @@
         "fov_arcsec": 120
       },
       "300": {
-        "file": "lya_cube_merged_with_artificial_source_CU_1pc_resampled_300as.bin",
+        "file": "lya_cube_merged_with_artificial_source_CU_1pc_300as.bin",
         "shape": [
           500,
           100,
@@ -42,7 +42,7 @@
         "fov_arcsec": 300
       },
       "600": {
-        "file": "lya_cube_merged_with_artificial_source_CU_1pc_resampled_600as.bin",
+        "file": "lya_cube_merged_with_artificial_source_CU_1pc_600as.bin",
         "shape": [
           500,
           100,
@@ -52,14 +52,14 @@
       }
     }
   },
-  "CGM_cube_resampled": {
+  "CGM_cube": {
     "label": "CGM cube",
-    "wave_min": 187.5,
-    "wave_max": 222.43,
+    "wave_min": 195.0,
+    "wave_max": 219.99,
     "wave_n": 500,
     "fov_variants": {
       "30": {
-        "file": "CGM_cube_resampled_30as.bin",
+        "file": "CGM_cube_30as.bin",
         "shape": [
           500,
           100,
@@ -68,7 +68,7 @@
         "fov_arcsec": 30
       },
       "60": {
-        "file": "CGM_cube_resampled_60as.bin",
+        "file": "CGM_cube_60as.bin",
         "shape": [
           500,
           100,
@@ -77,7 +77,7 @@
         "fov_arcsec": 60
       },
       "120": {
-        "file": "CGM_cube_resampled_120as.bin",
+        "file": "CGM_cube_120as.bin",
         "shape": [
           500,
           100,
@@ -86,7 +86,7 @@
         "fov_arcsec": 120
       },
       "300": {
-        "file": "CGM_cube_resampled_300as.bin",
+        "file": "CGM_cube_300as.bin",
         "shape": [
           500,
           100,
@@ -95,7 +95,7 @@
         "fov_arcsec": 300
       },
       "600": {
-        "file": "CGM_cube_resampled_600as.bin",
+        "file": "CGM_cube_600as.bin",
         "shape": [
           500,
           100,
@@ -105,14 +105,14 @@
       }
     }
   },
-  "galaxy_disk_cube_resampled": {
+  "galaxy_disk_cube": {
     "label": "Galaxy disk",
-    "wave_min": 187.5,
-    "wave_max": 222.43,
+    "wave_min": 195.0,
+    "wave_max": 219.99,
     "wave_n": 500,
     "fov_variants": {
       "30": {
-        "file": "galaxy_disk_cube_resampled_30as.bin",
+        "file": "galaxy_disk_cube_30as.bin",
         "shape": [
           500,
           100,
@@ -121,7 +121,7 @@
         "fov_arcsec": 30
       },
       "60": {
-        "file": "galaxy_disk_cube_resampled_60as.bin",
+        "file": "galaxy_disk_cube_60as.bin",
         "shape": [
           500,
           100,
@@ -130,7 +130,7 @@
         "fov_arcsec": 60
       },
       "120": {
-        "file": "galaxy_disk_cube_resampled_120as.bin",
+        "file": "galaxy_disk_cube_120as.bin",
         "shape": [
           500,
           100,
@@ -139,7 +139,7 @@
         "fov_arcsec": 120
       },
       "300": {
-        "file": "galaxy_disk_cube_resampled_300as.bin",
+        "file": "galaxy_disk_cube_300as.bin",
         "shape": [
           500,
           100,
@@ -148,7 +148,7 @@
         "fov_arcsec": 300
       },
       "600": {
-        "file": "galaxy_disk_cube_resampled_600as.bin",
+        "file": "galaxy_disk_cube_600as.bin",
         "shape": [
           500,
           100,
@@ -158,14 +158,14 @@
       }
     }
   },
-  "galaxy_and_cgm_cube_resampled": {
+  "galaxy_and_cgm_cube": {
     "label": "Galaxy + CGM",
-    "wave_min": 184.6,
-    "wave_max": 222.4,
+    "wave_min": 195.0,
+    "wave_max": 219.99,
     "wave_n": 500,
     "fov_variants": {
       "30": {
-        "file": "galaxy_and_cgm_cube_resampled_30as.bin",
+        "file": "galaxy_and_cgm_cube_30as.bin",
         "shape": [
           500,
           100,
@@ -174,7 +174,7 @@
         "fov_arcsec": 30
       },
       "60": {
-        "file": "galaxy_and_cgm_cube_resampled_60as.bin",
+        "file": "galaxy_and_cgm_cube_60as.bin",
         "shape": [
           500,
           100,
@@ -183,7 +183,7 @@
         "fov_arcsec": 60
       },
       "120": {
-        "file": "galaxy_and_cgm_cube_resampled_120as.bin",
+        "file": "galaxy_and_cgm_cube_120as.bin",
         "shape": [
           500,
           100,
@@ -192,7 +192,7 @@
         "fov_arcsec": 120
       },
       "300": {
-        "file": "galaxy_and_cgm_cube_resampled_300as.bin",
+        "file": "galaxy_and_cgm_cube_300as.bin",
         "shape": [
           500,
           100,
@@ -201,7 +201,7 @@
         "fov_arcsec": 300
       },
       "600": {
-        "file": "galaxy_and_cgm_cube_resampled_600as.bin",
+        "file": "galaxy_and_cgm_cube_600as.bin",
         "shape": [
           500,
           100,
@@ -211,14 +211,14 @@
       }
     }
   },
-  "cube_01_resampled": {
+  "cube_01": {
     "label": "cube_01",
     "wave_min": 184.6,
     "wave_max": 222.4,
     "wave_n": 500,
     "fov_variants": {
       "30": {
-        "file": "cube_01_resampled_30as.bin",
+        "file": "cube_01_30as.bin",
         "shape": [
           500,
           100,
@@ -227,7 +227,7 @@
         "fov_arcsec": 30
       },
       "60": {
-        "file": "cube_01_resampled_60as.bin",
+        "file": "cube_01_60as.bin",
         "shape": [
           500,
           100,
@@ -236,7 +236,7 @@
         "fov_arcsec": 60
       },
       "120": {
-        "file": "cube_01_resampled_120as.bin",
+        "file": "cube_01_120as.bin",
         "shape": [
           500,
           100,
@@ -245,7 +245,7 @@
         "fov_arcsec": 120
       },
       "300": {
-        "file": "cube_01_resampled_300as.bin",
+        "file": "cube_01_300as.bin",
         "shape": [
           500,
           100,
@@ -254,7 +254,7 @@
         "fov_arcsec": 300
       },
       "600": {
-        "file": "cube_01_resampled_600as.bin",
+        "file": "cube_01_600as.bin",
         "shape": [
           500,
           100,
