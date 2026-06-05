@@ -371,11 +371,15 @@
         <label class="kv" title="Pick an instrument from the shared spreadsheet. Loads all its parameters into the sliders.">Instrument <select id="instrument"></select></label>
         <button id="xlog" class="tog on" title="Logarithmic x-axis">xlog</button>
         <button id="ylog" class="tog" title="Logarithmic y-axis">ylog</button>
+        <button id="lock-axes" class="tog" title="Lock axes: freeze y-axis limits and image colorscale so they don't auto-rescale when you change parameters. Unlock to re-fit.">lock axes</button>
         <label class="kv snr-only" title="SNR mode: per pixel, per resolution element, per source, or per source × 2 spectral pixels (IFS).">SNR per <select id="snr_res">
           <option value="per pix" title="SNR computed over a single pixel.">pix</option>
           <option value="per Res elem" selected title="SNR computed over one resolution element (default).">Res elem</option>
           <option value="per Source" title="SNR computed over all pixels covered by the source.">Source</option>
         </select></label>
+        <button id="cfg-save" title="Save current parameters to a JSON file">save</button>
+        <button id="cfg-load" title="Load parameters from a previously saved JSON file">load</button>
+        <input type="file" id="cfg-file" accept=".json" style="display:none">
         <button id="reset" title="Reset all parameters to their default values (does not change the instrument).">↺</button>
       </div>
       <select id="xaxis" hidden></select>
@@ -1427,9 +1431,14 @@ function computeObservation(p){
       sourceSizeAfter[i] = Size_source[i]*slicer_eff;
       slitSizeAfter[i]   = Size_source[i]*slicer_eff;
     } else {
-      const a = Math.min(Size_source[i]*fsr, Slitlength[i]);
-      sourceSizeAfter[i] = a * (IFS ? Size_source[i] : Math.min(Size_source[i]*fsr, Slitwidth[i]));
-      slitSizeAfter[i]   = a * (IFS ? Math.max(Size_source[i], Slitwidth[i]) : Slitwidth[i]);
+      // Spatial extent collected along slit length (capped by slit) and slit width (FWHM units).
+      // fsr=2.35 converts σ → FWHM for comparison with physical slit dimensions.
+      // Source: integrate over min(source FWHM, slit) in both directions — same formula for IFS and non-IFS.
+      // Sky:    always limited by the slit aperture in both directions.
+      const along  = Math.min(Size_source[i]*fsr, Slitlength[i]);
+      const across = Math.min(Size_source[i]*fsr, Slitwidth[i]);
+      sourceSizeAfter[i] = along * across;
+      slitSizeAfter[i]   = along * (IFS ? Math.max(Size_source[i]*fsr, Slitwidth[i]) : Slitwidth[i]);
     }
   }
 
@@ -1570,6 +1579,11 @@ const GROUPS = ["Source","Strategy","Instrument","Spectrograph","Detector"];
 
 const FLAGS = { IFS:false, spectrograph:true, counting_mode:false };
 
+// Locked axis limits — captured on the first render after lock is enabled, then held fixed.
+// snrY[i] = [ymin, ymax] for SNR panel i (null = not yet captured).
+// img = { vmin0, vmax0 } per canvas key, mirroring STATE.imgCache.vmin0/vmax0 structure.
+const LOCK_AXES = { active: false, snrY: [null, null, null], img: null };
+
 // Image-tab options (affect the Spectro image view only)
 const IMG_FLAGS = {
   atmlambda: true,    // apply λ-dependent atmospheric transmission on the spectral profile (Gaussian-shaped, constant placeholder)
@@ -1672,6 +1686,8 @@ function applyInstrument(name){
   if ("IFS" in d) FLAGS.IFS = !!d.IFS;
   if (d.dimensions === 3) FLAGS.IFS = true;   // match Observation.py: dimensions=3 implies IFS=True
   if ("spectrograph" in d) FLAGS.spectrograph = !!d.spectrograph;
+  const _ifsCb = document.getElementById("cb-ifs-flag");
+  if (_ifsCb) _ifsCb.checked = FLAGS.IFS;
   // Stash for IFS view (needs FOV_size)
   STATE.instrument_FOV_size = (typeof d.FOV_size === "number") ? d.FOV_size : null;
   for (const k of Object.keys(PARAMS)) syncSlider(k);
@@ -1792,8 +1808,19 @@ function buildUI(){
         ni.addEventListener("blur", commit);
       });
     }
-    // (IFS, Spectrograph and γ-Threshold flag checkboxes are hidden — the FLAGS state is still driven by
-    //  the instrument spreadsheet "IFS" column / overrides in code.)
+    if (group === "Spectrograph"){
+      const fr = body.append("div").attr("class","flags-row");
+      const ifsLabel = fr.append("label")
+        .attr("class","check")
+        .attr("title","Enable IFS mode (integral field spectrograph). Unlocks the IFS view tab and switches to 3D cube SNR calculation.");
+      const ifsCb = ifsLabel.append("input").attr("type","checkbox").attr("id","cb-ifs-flag").property("checked", FLAGS.IFS);
+      ifsLabel.append("span").text(" IFS");
+      ifsCb.on("change", function(){
+        FLAGS.IFS = this.checked;
+        updateIfsTabVisibility();
+        scheduleUpdate();
+      });
+    }
   });
 }
 
@@ -2320,24 +2347,27 @@ function drawPlot(res){
   // ===== Panel 0 =====
   const p0 = panels[0];
   const allY0 = noiseSeries.flatMap(s=>s.y).concat(quadSum);
-  drawPanel(svg, p0, x, xScale, allY0, ylog, "Noise (e-/exp)", g=>{
+  const dom0 = drawPanel(svg, p0, x, xScale, allY0, ylog, "Noise (e-/exp)", g=>{
     noiseSeries.forEach(s=>{
       g.append("path").datum(s.y).attr("fill","none").attr("stroke",s.color).attr("stroke-width",5.0)
-        .attr("d", lineGen(x, p0, xScale, allY0, ylog));
+        .attr("d", lineGen(x, p0, xScale, allY0, ylog, LOCK_AXES.active ? LOCK_AXES.snrY[0] : null));
     });
     g.append("path").datum(quadSum).attr("fill","none").attr("stroke", cssVar("--plot-curve","#000")).attr("stroke-width",6.5).attr("stroke-opacity",0.7)
-      .attr("d", lineGen(x, p0, xScale, allY0, ylog));
+      .attr("d", lineGen(x, p0, xScale, allY0, ylog, LOCK_AXES.active ? LOCK_AXES.snrY[0] : null));
     legendBlock(g, p0, [
       ...noiseSeries.map(s=>({name:`${s.name}: ${fmtNum(s.y[iCur])}`, color:s.color})),
       {name:`Quad sum: ${fmtNum(quadSum[iCur])}`, color:"#000"}
     ]);
-  });
+  }, LOCK_AXES.active ? LOCK_AXES.snrY[0] : null);
+  if (LOCK_AXES.active && !LOCK_AXES.snrY[0]) LOCK_AXES.snrY[0] = dom0;
 
   // ===== Panel 1 =====
   const p1 = panels[1];
   const max1 = d3.max(contribStack[contribStack.length-1].y1);
-  drawStackPanel(svg, p1, x, xScale, contribStack, max1, ylog, "e-/exp (× npix)", iCur,
-    NAMES.map((n,j)=>({name:n, color:COLORS[j]})), (j)=>res.number_pixels_used[iCur]*res.electrons_per_pix[iCur][j]);
+  const dom1 = drawStackPanel(svg, p1, x, xScale, contribStack, max1, ylog, "e-/exp (× npix)", iCur,
+    NAMES.map((n,j)=>({name:n, color:COLORS[j]})), (j)=>res.number_pixels_used[iCur]*res.electrons_per_pix[iCur][j],
+    undefined, LOCK_AXES.active ? LOCK_AXES.snrY[1] : null);
+  if (LOCK_AXES.active && !LOCK_AXES.snrY[1]) LOCK_AXES.snrY[1] = dom1;
 
   // ===== Panel 2 =====
   const p2 = panels[2];
@@ -2361,11 +2391,12 @@ function drawPlot(res){
       ? ` [${_fmtPix(_ps)} spat × ${_fmtPix(_pl)} spec pix]`
       : ` [${_fmtPix(res.number_pixels_used[iCur])} pix]`;
   const snrTitle = `SNR ${isFinite(snrCur)?snrCur.toFixed(2):"—"} (max ${snrMax!=null?snrMax.toFixed(2):"—"})${_pixInfo}\nSB(5σ,${sbLabel}) ${isFinite(sbVal)?sbVal.toFixed(2):"—"} log[erg/cm²/s/asec²]`;
-  drawStackPanel(svg, p2, x, xScale, snrStack, max2, ylog, "SNR contributions", iCur,
+  const dom2 = drawStackPanel(svg, p2, x, xScale, snrStack, max2, ylog, "SNR contributions", iCur,
     NAMES.map((n,j)=>({name:n, color:COLORS[j]})), (j)=>{
       const Tn = res.Total_noise_final[iCur];
       return Tn>0 ? res.SNR[iCur]*res.noises[iCur][j]**2/(Tn*Tn) : 0;
-    }, snrTitle);
+    }, snrTitle, LOCK_AXES.active ? LOCK_AXES.snrY[2] : null);
+  if (LOCK_AXES.active && !LOCK_AXES.snrY[2]) LOCK_AXES.snrY[2] = dom2;
 
   // x-axis label — bottom-right of the last panel, just above the x-axis line
   const lastP = panels[panels.length-1];
@@ -2479,10 +2510,14 @@ function stackify(N, S, get){
   return layers;
 }
 
-function lineGen(x, panel, xScale, allY, ylog){
+function lineGen(x, panel, xScale, allY, ylog, lockedDom){
   const yDom = d3.extent(allY.filter(v=>isFinite(v)));
   let yScale;
-  if (ylog){
+  if (lockedDom){
+    yScale = ylog
+      ? d3.scaleLog().domain(lockedDom).range([panel.h, 0])
+      : d3.scaleLinear().domain(lockedDom).range([panel.h, 0]);
+  } else if (ylog){
     const minPos = d3.min(allY.filter(v=>v>0));
     yScale = d3.scaleLog().domain([Math.max(minPos||1e-6,1e-30), Math.max(yDom[1], (minPos||1e-6)*10)]).range([panel.h, 0]);
   } else {
@@ -2494,14 +2529,28 @@ function lineGen(x, panel, xScale, allY, ylog){
     .y(v=>panel.y + yScale(v));
 }
 
-function drawPanel(svg, panel, x, xScale, allY, ylog, title, drawLines){
-  const yDom = d3.extent(allY.filter(v=>isFinite(v)));
+let _clipIdSeq = 0;
+function clipPanel(svg, panel){
+  const id = `cp-${++_clipIdSeq}`;
+  svg.append("defs").append("clipPath").attr("id", id)
+    .append("rect")
+    .attr("x", panel.x).attr("y", panel.y)
+    .attr("width", panel.w).attr("height", panel.h);
+  return id;
+}
+
+function drawPanel(svg, panel, x, xScale, allY, ylog, title, drawLines, lockedDom){
+  const yDomAuto = d3.extent(allY.filter(v=>isFinite(v)));
   let yScale;
-  if (ylog){
+  if (lockedDom){
+    yScale = ylog
+      ? d3.scaleLog().domain(lockedDom).range([panel.h, 0])
+      : d3.scaleLinear().domain(lockedDom).range([panel.h, 0]);
+  } else if (ylog){
     const minPos = d3.min(allY.filter(v=>v>0));
-    yScale = d3.scaleLog().domain([Math.max(minPos||1e-6,1e-30), Math.max(yDom[1], (minPos||1e-6)*10)]).range([panel.h, 0]);
+    yScale = d3.scaleLog().domain([Math.max(minPos||1e-6,1e-30), Math.max(yDomAuto[1], (minPos||1e-6)*10)]).range([panel.h, 0]);
   } else {
-    yScale = d3.scaleLinear().domain([Math.min(yDom[0],0), yDom[1]||1]).range([panel.h, 0]);
+    yScale = d3.scaleLinear().domain([Math.min(yDomAuto[0],0), yDomAuto[1]||1]).range([panel.h, 0]);
   }
   const xAxisScale = xScale.copy().range([panel.x, panel.x+panel.w]);
   const yAxisScale = yScale.copy().range([panel.y+panel.h, panel.y]);
@@ -2515,7 +2564,9 @@ function drawPanel(svg, panel, x, xScale, allY, ylog, title, drawLines){
   svg.append("text").attr("class","ax-title")
     .attr("transform",`translate(${panel.x-50},${panel.y+panel.h/2}) rotate(-90)`)
     .attr("text-anchor","middle").text(title);
-  drawLines(svg.append("g"));
+  const clipId = clipPanel(svg, panel);
+  drawLines(svg.append("g").attr("clip-path", `url(#${clipId})`));
+  return yScale.domain();
 }
 
 /* Build an axis with sparse tick labels — works for both linear and log scales.
@@ -2548,9 +2599,13 @@ function makeAxis(axisFn, scale, nMax, withLabels){
   }
 }
 
-function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, legend, getCur, legendTitle){
+function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, legend, getCur, legendTitle, lockedDom){
   let yScale;
-  if (ylog){
+  if (lockedDom){
+    yScale = ylog
+      ? d3.scaleLog().domain(lockedDom).range([panel.h, 0])
+      : d3.scaleLinear().domain(lockedDom).range([panel.h, 0]);
+  } else if (ylog){
     let minPos = Infinity;
     for (const lay of layers) for (const v of lay.y1) if (v>0 && v<minPos) minPos = v;
     if (!isFinite(minPos)) minPos = 1e-3;
@@ -2570,6 +2625,8 @@ function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, 
   svg.append("text").attr("class","ax-title")
     .attr("transform",`translate(${panel.x-50},${panel.y+panel.h/2}) rotate(-90)`)
     .attr("text-anchor","middle").text(title);
+  const clipId = clipPanel(svg, panel);
+  const dataG = svg.append("g").attr("clip-path", `url(#${clipId})`);
   const yDomMin = yScale.domain()[0];
   for (let s=0;s<layers.length;s++){
     const lay = layers[s];
@@ -2577,7 +2634,7 @@ function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, 
       .x((_,i)=>panel.x + xScale(x[i])*panel.w)
       .y0((_,i)=>panel.y + yScale(Math.max(lay.y0[i] || yDomMin, yDomMin)))
       .y1((_,i)=>panel.y + yScale(Math.max(lay.y1[i] || yDomMin, yDomMin)));
-    svg.append("path").datum(lay.y1.map((_,i)=>i))
+    dataG.append("path").datum(lay.y1.map((_,i)=>i))
       .attr("fill", legend[s].color).attr("fill-opacity",0.7)
       .attr("stroke", legend[s].color).attr("stroke-width", 1.2).attr("stroke-opacity",0.95)
       .attr("d", a);
@@ -2588,6 +2645,7 @@ function drawStackPanel(svg, panel, x, xScale, layers, maxY, ylog, title, iCur, 
     const pct = totalCur>0 ? (100*v/totalCur).toFixed(1) : "0";
     return {name:`${L.name}: ${fmtNum(v)} (${pct}%)`, color:L.color};
   }), legendTitle);
+  return yScale.domain();
 }
 
 function legendBlock(g, panel, items, title){
@@ -2799,7 +2857,18 @@ function applyColorScale(which){
   const sigma = (IMG_FLAGS.smoothing || 0) / 2.355;  // FWHM → sigma
   const data = sigma >= 0.5 ? gaussBlur2D(rawData, c.W, c.H, sigma) : rawData;
   const cm = STATE.imgCM[which];
-  const v0 = c.vmin0[dataKey], v1 = c.vmax0[dataKey];
+  // Axis lock: capture vmin0/vmax0 on first locked render; use frozen values on subsequent renders.
+  if (LOCK_AXES.active){
+    if (!LOCK_AXES.img) LOCK_AXES.img = { vmin0: {}, vmax0: {} };
+    if (!(which in LOCK_AXES.img.vmin0)){
+      LOCK_AXES.img.vmin0[which] = c.vmin0[dataKey];
+      LOCK_AXES.img.vmax0[which] = c.vmax0[dataKey];
+    }
+  }
+  const v0 = (LOCK_AXES.active && LOCK_AXES.img && which in LOCK_AXES.img.vmin0)
+    ? LOCK_AXES.img.vmin0[which] : c.vmin0[dataKey];
+  const v1 = (LOCK_AXES.active && LOCK_AXES.img && which in LOCK_AXES.img.vmax0)
+    ? LOCK_AXES.img.vmax0[which] : c.vmax0[dataKey];
   const half = (v1 - v0) / 2;
   const center0 = (v0 + v1) / 2;
   const center = center0 + cm.bias * half;
@@ -3972,7 +4041,60 @@ async function main(){
       this.classList.toggle("on"); scheduleUpdate();
     });
   });
+  document.getElementById("lock-axes").addEventListener("click", function(){
+    LOCK_AXES.active = this.classList.toggle("on");
+    if (!LOCK_AXES.active){
+      // Unlock: clear frozen limits so next render auto-fits
+      LOCK_AXES.snrY = [null, null, null];
+      LOCK_AXES.img  = null;
+      scheduleUpdate();
+    }
+    // When locking: limits are captured on the very next render (lazy capture)
+  });
   document.getElementById("snr_res").addEventListener("change", scheduleUpdate);
+  document.getElementById("cfg-save").addEventListener("click", ()=>{
+    const cfg = {
+      version: 1,
+      instrument: STATE.current_instrument || "",
+      xKey: STATE.xKey,
+      xlog: document.getElementById("xlog").classList.contains("on"),
+      ylog: document.getElementById("ylog").classList.contains("on"),
+      values: Object.assign({}, STATE.values),
+      img_flags: Object.assign({}, IMG_FLAGS),
+    };
+    const blob = new Blob([JSON.stringify(cfg, null, 2)], {type:"application/json"});
+    const a = Object.assign(document.createElement("a"), {
+      href: URL.createObjectURL(blob),
+      download: `etc-config-${(cfg.instrument||"params").replace(/\s+/g,"-")}.json`
+    });
+    a.click(); URL.revokeObjectURL(a.href);
+  });
+  document.getElementById("cfg-load").addEventListener("click", ()=>
+    document.getElementById("cfg-file").click()
+  );
+  document.getElementById("cfg-file").addEventListener("change", function(){
+    const file = this.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const cfg = JSON.parse(e.target.result);
+        if (cfg.values) Object.assign(STATE.values, cfg.values);
+        if (cfg.img_flags) Object.assign(IMG_FLAGS, cfg.img_flags);
+        if (cfg.xKey && PARAMS[cfg.xKey]) STATE.xKey = cfg.xKey;
+        if (typeof cfg.xlog === "boolean")
+          document.getElementById("xlog").classList.toggle("on", cfg.xlog);
+        if (typeof cfg.ylog === "boolean")
+          document.getElementById("ylog").classList.toggle("on", cfg.ylog);
+        for (const k of Object.keys(PARAMS)) syncSlider(k);
+        buildImageOptionsUI();
+        scheduleUpdate();
+      } catch(err) {
+        alert("Could not load config: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+    this.value = "";  // allow reloading the same file
+  });
   document.getElementById("reset").addEventListener("click", ()=>{ initValuesToDefault(); for (const k of Object.keys(PARAMS)) syncSlider(k); scheduleUpdate(); });
   document.getElementById("reload").addEventListener("click", async ()=>{
     try {

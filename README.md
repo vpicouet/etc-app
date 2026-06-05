@@ -30,4 +30,21 @@ python3 -m http.server 8000
 
 ## License
 
-Same as the upstream notebook.
+[CC BY 4.0](LICENSE) — you are free to use, modify, and redistribute this code for any purpose, including commercially, **provided you give appropriate credit and cite the paper below**.
+
+### Citation
+
+If you use or build upon this software in academic work, please cite:
+
+```bibtex
+@article{picouet2025etc,
+  author  = {Picouet, Vincent},
+  title   = {A Generic Spectrograph Simulator for Exposure Time
+             Calculations, Trade Studies, and Observation Strategy
+             Optimization},
+  journal = {Journal of Astronomical Instrumentation},
+  year    = {2025},
+}
+```
+
+This citation is required under the attribution terms of CC BY 4.0. Forks and derivative tools must include this notice.
