@@ -34,13 +34,19 @@ OUT_NZ = 500   # spectral channels
 # Covers FIREBall (~50"), SCWI (~200"), KCWI-like (>500")
 FOV_ARCSEC = [30, 60, 120, 300, 600]
 
-# Cubes: (fits_stem, display_label)
+# Cubes: (fits_stem, display_label, wave_out_override_nm_or_None)
+# wave_out_override: force output wavelength range (nm) regardless of the cube's native WCS.
+# Needed for cubes whose native λ (e.g. 287–293 nm) doesn't overlap with UV instruments
+# (185–220 nm).  The spectral axis is simply stretched to fill the requested band — same
+# trick as Observation.py which always passes wave_range_nm = detector band.
+LYA_RANGE = (184.6, 222.4)   # matches other cubes and FIREBall/SCWI band
+
 CUBES = [
-    ("lya_cube_merged_with_artificial_source_CU_1pc_resampled", "Lya CGM + artificial source"),
-    ("CGM_cube_resampled",                                       "CGM cube"),
-    ("galaxy_disk_cube_resampled",                               "Galaxy disk"),
-    ("galaxy_and_cgm_cube_resampled",                            "Galaxy + CGM"),
-    ("cube_01_resampled",                                        "cube_01"),
+    ("lya_cube_merged_with_artificial_source_CU_1pc_resampled", "Lya CGM + artificial source", None),
+    ("CGM_cube_resampled",                                       "CGM cube",                    None),
+    ("galaxy_disk_cube_resampled",                               "Galaxy disk",                 None),
+    ("galaxy_and_cgm_cube_resampled",                            "Galaxy + CGM",                LYA_RANGE),
+    ("cube_01_resampled",                                        "cube_01",                     LYA_RANGE),
 ]
 
 # ---------------------------------------------------------------------------
@@ -107,7 +113,7 @@ def resample_phys(data, wave_nm_in, spatial_radius_in_x, spatial_radius_in_y,
 # ---------------------------------------------------------------------------
 index = {}
 
-for stem, label in CUBES:
+for stem, label, wave_override in CUBES:
     src = CUBES_IN / (stem + ".fits")
     if not src.exists():
         print(f"  SKIP {stem} (not found)")
@@ -123,13 +129,22 @@ for stem, label in CUBES:
     nz, ny, nx = data.shape
     print(f"    input  : ({nz}, {ny}, {nx})  λ={wave_nm_in[0]:.1f}–{wave_nm_in[-1]:.1f} nm  "
           f"FOV={2*rx_in:.0f}\"×{2*ry_in:.0f}\"")
+    if wave_override:
+        print(f"    → remapping spectral axis to {wave_override[0]:.1f}–{wave_override[1]:.1f} nm")
 
     # Subtract median background (same as Observation.py)
     data -= np.nanmedian(data)
     data  = np.clip(data, 0, None)
 
-    # Output spectral axis (same range as input, OUT_NZ channels)
-    wave_nm_out = np.linspace(wave_nm_in[0], wave_nm_in[-1], OUT_NZ)
+    # Output spectral axis: use override if the native range doesn't match instrument band
+    if wave_override:
+        wave_nm_out = np.linspace(wave_override[0], wave_override[1], OUT_NZ)
+        # Remap input spectral axis to [0,1] and stretch — same as Observation.py phys=False
+        # but only on the spectral dimension. We re-create a new wave_nm_in that spans the
+        # same number of points, so the interpolator samples the full cube spectral range.
+        wave_nm_in = np.linspace(wave_override[0], wave_override[1], len(wave_nm_in))
+    else:
+        wave_nm_out = np.linspace(wave_nm_in[0], wave_nm_in[-1], OUT_NZ)
 
     cube_entry = {
         "label":    label,

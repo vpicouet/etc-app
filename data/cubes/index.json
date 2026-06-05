@@ -160,8 +160,8 @@
   },
   "galaxy_and_cgm_cube_resampled": {
     "label": "Galaxy + CGM",
-    "wave_min": 286.75,
-    "wave_max": 293.237,
+    "wave_min": 184.6,
+    "wave_max": 222.4,
     "wave_n": 500,
     "fov_variants": {
       "30": {
@@ -213,8 +213,8 @@
   },
   "cube_01_resampled": {
     "label": "cube_01",
-    "wave_min": 286.75,
-    "wave_max": 293.237,
+    "wave_min": 184.6,
+    "wave_max": 222.4,
     "wave_n": 500,
     "fov_variants": {
       "30": {
