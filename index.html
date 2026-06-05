@@ -1950,6 +1950,29 @@ async function fetchSdssObject(name){
 
   STATE.fetchedSpectrum = { name: key, redshift };
   IMG_FLAGS.spectrum = key;
+
+  // Auto-set Signal slider to the mean SDSS flux in the detector window.
+  // SDSS flux unit = 10⁻¹⁷ erg/cm²/s/Å; Signal slider is in erg/cm²/s/arcsec²/Å.
+  // The SDSS 3″ fiber covers ~7 arcsec², so divide by that to get per-arcsec².
+  const detWavMin = (STATE.values.wavelength||200)*10 - (STATE.values.Bandwidth||200)/2;
+  const detWavMax = (STATE.values.wavelength||200)*10 + (STATE.values.Bandwidth||200)/2;
+  let fluxSum = 0, fluxN = 0;
+  for (let i = 0; i < wave.length; i++){
+    if (wave[i] >= detWavMin && wave[i] <= detWavMax && isFinite(flux[i]) && flux[i] > 0){
+      fluxSum += flux[i]; fluxN++;
+    }
+  }
+  if (fluxN > 0){
+    const meanFluxSDSS = fluxSum / fluxN;          // 10⁻¹⁷ erg/cm²/s/Å
+    const meanFluxCGS  = meanFluxSDSS * 1e-17;     // erg/cm²/s/Å
+    const fiberAreaAsec2 = Math.PI * (1.5*1.5);    // SDSS 3″-diameter fiber
+    const SB = meanFluxCGS / fiberAreaAsec2;       // erg/cm²/s/arcsec²/Å
+    const Sp = PARAMS.Signal;
+    const clamped = Math.min(Math.max(SB, Math.pow(10,Sp.min)), Math.pow(10,Sp.max));
+    STATE.values.Signal = clamped;
+    syncSlider("Signal");
+  }
+
   status.className = "ok";
   status.textContent = `✓ ${key} (${wave.length} pts, z=${redshift.toFixed(4)})`;
   buildImageOptionsUI();

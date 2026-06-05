@@ -1,0 +1,4 @@
+{
+  "instruments": ["GALEX FUV", "SCWI SPEC", "UVEX FUV", "FIREBall-2 2025"],
+  "detectors": ["qCCD1", "qCCD2", "EMCCD201"]
+}

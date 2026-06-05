@@ -200,12 +200,35 @@ The spectral profile $\phi(\lambda)$ along the detector spectral axis is built f
 
 - **Baseline emission line** — a Gaussian centred at $\lambda$ with $\sigma=\sqrt{\sigma_\text{spec}^{2}+\sigma_\text{line}^{2}}$ (PSF convolved with the source line width);
 - **Baked SED** (~99 templates: QSO HST/FOS, COSMOS galaxies, Salvato QSO) — interpolated on the detector wavelength grid in the source rest frame (via the redshift) and normalised by its *mean inside the detector window*, so the source remains visible even when its peak lies far from the observed wavelength.
+- **SDSS live fetch** — see §6.1.1 below.
+- **User CSV** — any two-column (wavelength, flux) file dropped or uploaded via the spectrum dropdown; wavelength units are auto-detected (Å, nm, or µm). The curve is peak-normalised to 1.
 
 Throughput$(\lambda)$ and atmospheric transmission$(\lambda)$ multiply the profile if their toggles are on:
 
 $$\phi(\lambda)\;\leftarrow\;\phi(\lambda)\;T_\%(\lambda)\;A_\%(\lambda)$$
 
 Throughput$(\lambda)$ is modelled as a Gaussian centred at the observed $\lambda$ with FWHM $\Delta\lambda_T$; atmospheric transmission is taken from the baked `pwv_kpno` or `transmission_ground` curve.
+
+### 6.1.1 Live SDSS spectrum fetch {#sdss-fetch}
+
+When the instrument's detector window overlaps the SDSS optical range (3800–9200 Å), an **SDSS object** search field appears below the spectrum dropdown. Type any astronomical object name (e.g. `NGC 1068`, `Mrk 421`) and click **Load**. The app performs four CORS-accessible API calls in sequence:
+
+| Step | Endpoint | Purpose |
+|---|---|---|
+| 1 | `POST https://mast.stsci.edu/api/v0/invoke` · `Mast.Name.Lookup` | Resolve name → RA, Dec |
+| 2 | `POST …invoke` · `Mast.Caom.Cone` | Cone search → SDSS spectrum observation id |
+| 3 | `POST …invoke` · `Mast.Caom.Products` | Products list → spec-lite FITS URI |
+| 4 | `GET https://mast.stsci.edu/api/v0/Download/file?uri=…` | Download FITS binary |
+
+Redshift is looked up separately via the SIMBAD TAP endpoint (best-effort; falls back to 0). The FITS binary table (HDU 1) is parsed entirely in JavaScript: the `loglam` column gives $\log_{10}(\lambda/\text{Å})$ and the `flux` column gives $F_\lambda$ in units of $10^{-17}$ erg cm$^{-2}$ s$^{-1}$ Å$^{-1}$.
+
+After download the spectrum is:
+1. **Resampled** onto the baked SED grid (80–1100 nm, 4000 pts) by linear interpolation, zeroed outside the SDSS range.
+2. **Peak-normalised** to 1 and injected into `SPECTRA_DATA.spectra` under the key `SDSS: <name>`.
+3. **Selected** automatically in the spectrum dropdown and used for the next simulation.
+4. The **Source flux slider** is auto-set to the mean SDSS flux in the detector window, converted from the SDSS fibre flux (3″ diameter, ≈ 7.1 arcsec²) to surface brightness in erg cm$^{-2}$ s$^{-1}$ arcsec$^{-2}$ Å$^{-1}$. The slider can be freely adjusted afterwards.
+
+**Limitations:** SDSS footprint covers ~14 000 deg² (≈ 30 % of the sky will not be found). Coverage is 3800–9200 Å only — UV instruments (FIREBall, SCWI, GALEX, UVEX) are outside range and the field is hidden automatically.
 
 ### 6.2 Spatial × spectral construction {#image-shape}
 

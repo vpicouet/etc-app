@@ -126,10 +126,15 @@
   .radar-title{font-size:11px;fill:var(--text-soft);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.05em}
 
   /* Hover tooltip (shared with all SVGs on the page) */
-  #hover{position:fixed;pointer-events:none;background:rgba(0,0,0,0.88);color:#fff;
-    font-size:11px;padding:5px 8px;border-radius:4px;font-family:var(--font-mono);
-    z-index:9999;white-space:pre;display:none;line-height:1.4;
-    border:1px solid rgba(255,255,255,0.08)}
+  #hover{position:fixed;pointer-events:none;background:rgba(20,20,30,0.96);color:#cdd6f4;
+    font-size:11px;padding:6px 10px;border-radius:5px;font-family:var(--font-mono);
+    z-index:9999;display:none;line-height:1.5;
+    border:1px solid rgba(255,255,255,0.12);max-width:600px}
+  #hover table{border-collapse:collapse}
+  #hover td,#hover th{padding:1px 8px;white-space:nowrap}
+  #hover th{border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:3px}
+  #hover td:first-child,#hover th:first-child{padding-left:0;color:var(--muted,#888);text-align:right}
+  #hover .tip-hi{font-weight:700}
 
   #status{position:absolute;bottom:8px;right:10px;font-size:10.5px;color:var(--muted);
     font-family:var(--font-mono);padding:2px 6px;background:rgba(0,0,0,0);pointer-events:none}
@@ -207,6 +212,11 @@
           <select id="instr-picker"><option value="">+ add…</option></select>
         </div>
         <div id="instr-chips" class="chips"></div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+          <span style="font-size:10px;color:var(--muted);white-space:nowrap">selection</span>
+          <input type="range" id="radar-blend-instr" min="0" max="1" step="0.01" value="1" style="flex:1">
+          <span style="font-size:10px;color:var(--muted);white-space:nowrap">all</span>
+        </div>
       </div>
       <hr class="picker-sep">
       <div class="picker-group">
@@ -218,6 +228,11 @@
           <select id="det-picker"><option value="">+ add…</option></select>
         </div>
         <div id="det-chips" class="chips"></div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+          <span style="font-size:10px;color:var(--muted);white-space:nowrap">selection</span>
+          <input type="range" id="radar-blend-det" min="0" max="1" step="0.01" value="1" style="flex:1">
+          <span style="font-size:10px;color:var(--muted);white-space:nowrap">all</span>
+        </div>
       </div>
     </div>
   </div>
@@ -253,16 +268,51 @@ function cssVar(name, fb){ return getComputedStyle(document.body).getPropertyVal
    FLOATING HOVER TOOLTIP
    ========================================================================== */
 const tip = document.getElementById("hover");
-function showTip(html, e){
-  tip.textContent = html;
+function _posTip(e){
+  const pad = 14;
+  requestAnimationFrame(() => {
+    const box = tip.getBoundingClientRect();
+    let x = e.clientX + pad, y = e.clientY + pad;
+    if (x + box.width  > window.innerWidth)  x = e.clientX - pad - box.width;
+    if (y + box.height > window.innerHeight) y = e.clientY - pad - box.height;
+    tip.style.left = x + "px";
+    tip.style.top  = y + "px";
+  });
+}
+function showTip(text, e){
+  while (tip.firstChild) tip.removeChild(tip.firstChild);
+  tip.textContent = text;
   tip.style.display = "block";
-  const pad = 12;
-  let x = e.clientX + pad, y = e.clientY + pad;
-  const box = tip.getBoundingClientRect();
-  if (x + box.width  > window.innerWidth)  x = e.clientX - pad - box.width;
-  if (y + box.height > window.innerHeight) y = e.clientY - pad - box.height;
-  tip.style.left = x + "px";
-  tip.style.top  = y + "px";
+  _posTip(e);
+}
+// Build a DOM table tooltip (no innerHTML — all textContent).
+// headers: [{name, color}], rows: [{label, values:[str]}], hiIdx: highlighted column index
+function showTipTable(headers, rows, hiIdx, e){
+  while (tip.firstChild) tip.removeChild(tip.firstChild);
+  const tbl = document.createElement("table");
+  const thead = tbl.createTHead();
+  const hr = thead.insertRow();
+  const th0 = document.createElement("th"); hr.appendChild(th0);
+  headers.forEach((h, i) => {
+    const th = document.createElement("th");
+    th.textContent = h.name;
+    th.style.color = h.color;
+    if (i === hiIdx) th.classList.add("tip-hi");
+    hr.appendChild(th);
+  });
+  const tbody = tbl.createTBody();
+  rows.forEach(row => {
+    const tr = tbody.insertRow();
+    const td0 = tr.insertCell(); td0.textContent = row.label;
+    row.values.forEach((v, i) => {
+      const td = tr.insertCell();
+      td.textContent = v;
+      if (i === hiIdx){ td.classList.add("tip-hi"); td.style.color = headers[i].color; }
+    });
+  });
+  tip.appendChild(tbl);
+  tip.style.display = "block";
+  _posTip(e);
 }
 function hideTip(){ tip.style.display = "none"; }
 
@@ -693,17 +743,72 @@ const RADAR_INSTR_METRICS = [
   { key:"Det_noise_per_time",  label:"Det noise/√h",     dir:-1, unit:"e-/√h",  absMin:0    },
   { key:"Det_noise_per_frame", label:"Det noise/exp",    dir:-1, unit:"e-/exp", absMin:0    }
 ];
+// Detector radar axes — computed from raw Configs params via deriveDet()
 const RADAR_DET_METRICS = [
-  { key:"QE",            label:"QE",           dir:1,  unit:"",        absMin:null },
-  { key:"RN",            label:"Read noise",   dir:-1, unit:"e-/pix",  absMin:0    },
-  { key:"Dark_current",  label:"Dark",         dir:-1, unit:"e-/px/h", absMin:0    },
-  { key:"CIC_charge",    label:"CIC",          dir:-1, unit:"e-/exp",  absMin:0    },
-  { key:"pixel_size",    label:"Pix size",     dir:-1, unit:"μm",      absMin:0    },
-  { key:"EM_gain",       label:"EM gain",      dir:1,  unit:"",        absMin:null }
+  { key:"det_QE",         label:"QE",            dir:1,  unit:"" },
+  { key:"det_pix_size",   label:"Pix size (μm)", dir:-1, unit:"μm" },
+  { key:"det_noise_exp",  label:"Noise/exp",     dir:-1, unit:"e⁻/pix" },
+  { key:"det_background", label:"Background",    dir:-1, unit:"e⁻/pix/h" },
+  { key:"det_efficiency", label:"Efficiency",    dir:1,  unit:"%" },
 ];
 
-// Returns per-axis: rawValues[], scores[] (0=worst→1=best), inner (worst), outer (best)
-function buildRadarValues(metrics, getValue, selection){
+// Derive scalar metrics for the detector radar from raw Configs params
+function deriveDet(d){
+  const n = k => { const v = parseFloat(d[k]); return isFinite(v) ? v : NaN; };
+  const QE   = n("QE");
+  const pix  = n("pixel_size");
+  const RN   = n("RN");
+  const EM   = n("EM_gain");
+  const CIC  = n("CIC_charge");
+  const Dark = n("Dark_current");
+  const texp = n("exposure_time");
+  const tro  = n("readout_time");
+
+  const RN_eff = (isFinite(EM) && EM > 1) ? RN / EM : RN;
+  const dark_per_exp = (isFinite(Dark) && isFinite(texp)) ? Dark * texp / 3600 : 0;
+  const noise_exp = Math.sqrt(
+    (isFinite(RN_eff) ? RN_eff * RN_eff : 0) +
+    (isFinite(CIC)    ? CIC              : 0) +
+    dark_per_exp
+  );
+  // Background = total detector noise sources per hour (not counting readout)
+  const background = (isFinite(Dark) ? Dark : 0) +
+                     (isFinite(CIC) && isFinite(texp) && texp > 0 ? CIC * 3600 / texp : 0);
+  // Efficiency = fraction of time actually integrating (readout overhead)
+  const efficiency = (isFinite(texp) && isFinite(tro) && (texp + tro) > 0)
+    ? 100 * texp / (texp + tro) : NaN;
+
+  return {
+    det_QE:         isFinite(QE)         ? QE         : NaN,
+    det_pix_size:   isFinite(pix)        ? pix        : NaN,
+    det_noise_exp:  isFinite(noise_exp)  ? noise_exp  : NaN,
+    det_background: isFinite(background) ? background : NaN,
+    det_efficiency: isFinite(efficiency) ? efficiency : NaN,
+  };
+}
+
+// Compute global min/max for each radar metric across the full dataset (not just selection).
+// Called once after data loads; stored in m.globalMin / m.globalMax.
+function computeRadarGlobals(metrics, allItems, getValue){
+  for (const m of metrics){
+    const vals = allItems.map(item => {
+      const v = getValue(item.name, m.key);
+      return (typeof v === "number" && isFinite(v)) ? v : null;
+    }).filter(v => v !== null);
+    m.globalMin = vals.length ? Math.min(...vals) : 0;
+    m.globalMax = vals.length ? Math.max(...vals) : 1;
+  }
+}
+
+// Returns per-axis: rawValues[], scores[] (0=worst→1=best), inner (worst bound), outer (best bound).
+// useGlobal=true  → bounds from globalMin/globalMax (stable, set from full dataset).
+// useGlobal=false → bounds from selection only (but if selection has 1 item, falls back to global).
+// blend: 0 = bounds from selection only, 1 = bounds from full dataset, in-between = interpolated.
+// At blend=0: score computed relative to selection (1 item → star at 100% everywhere).
+// At blend=1: score computed relative to global dataset.
+// In between: score interpolated linearly between those two values — no discontinuity.
+function buildRadarValues(metrics, getValue, selection, blend){
+  const t = Math.max(0, Math.min(1, blend ?? 1));
   return metrics.map(m => {
     const raw = selection.map(name => {
       const v = getValue(name, m.key);
@@ -712,28 +817,42 @@ function buildRadarValues(metrics, getValue, selection){
     const valid = raw.filter(v => v != null);
     if (!valid.length) return { ...m, raw, scores: raw.map(()=>null), inner:0, outer:1 };
 
-    const dataMin = Math.min(...valid);
-    const dataMax = Math.max(...valid);
+    const selMin = Math.min(...valid);
+    const selMax = Math.max(...valid);
+    const gMin = (m.globalMin != null) ? m.globalMin : selMin;
+    const gMax = (m.globalMax != null) ? m.globalMax : selMax;
 
-    let inner, outer;
-    if (m.dir === 1){
-      // higher=better: inner=worst (min among selection), outer=best (max among selection)
-      inner = dataMin;
-      outer = dataMax;
-    } else {
-      // lower=better: outer=best (min among selection), inner=worst (max among selection)
-      outer = dataMin;
-      inner = dataMax;
-    }
+    // Score each value at blend=0 (relative to selection)
+    const scoreAtSel = v => {
+      if (v == null) return null;
+      if (selMin === selMax) return 1;                   // all identical in selection → 100%
+      const lo = m.dir === 1 ? selMin : selMax;
+      const hi = m.dir === 1 ? selMax : selMin;
+      return Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+    };
 
-    // If all identical, spread a bit so the ring is visible
-    const span = Math.abs(outer - inner);
-    const safeSpan = span > 0 ? span : Math.abs(inner) * 0.1 || 1;
+    // Score each value at blend=1 (relative to global)
+    const scoreAtGlobal = v => {
+      if (v == null) return null;
+      if (gMin === gMax) return 1;
+      const lo = m.dir === 1 ? gMin : gMax;
+      const hi = m.dir === 1 ? gMax : gMin;
+      return Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+    };
 
+    // Linearly interpolate scores — no discontinuity at any blend value
     const scores = raw.map(v => {
       if (v == null) return null;
-      return Math.max(0, Math.min(1, (v - inner) / (outer - inner + (span===0 ? safeSpan : 0))));
+      const s0 = scoreAtSel(v);
+      const s1 = scoreAtGlobal(v);
+      return s0 + t * (s1 - s0);
     });
+
+    // Derive inner/outer for tick labels: interpolate the actual bound values
+    const rangeMin = selMin + t * (gMin - selMin);
+    const rangeMax = selMax + t * (gMax - selMax);
+    const inner = m.dir === 1 ? rangeMin : rangeMax;
+    const outer = m.dir === 1 ? rangeMax : rangeMin;
 
     return { ...m, raw, scores, inner, outer };
   });
@@ -747,7 +866,7 @@ function fmtRadarVal(v, unit){
   return unit ? `${s} ${unit}` : s;
 }
 
-function drawRadar(svgId, title, metrics, getValue, selection, displayNames){
+function drawRadar(svgId, title, metrics, getValue, selection, useGlobal, displayNames){
   const svg = d3.select("#"+svgId);
   const node = svg.node();
   const {W, H} = svgSize(node);
@@ -766,7 +885,7 @@ function drawRadar(svgId, title, metrics, getValue, selection, displayNames){
     return;
   }
 
-  const data = buildRadarValues(metrics, getValue, selection);
+  const data = buildRadarValues(metrics, getValue, selection, useGlobal);
   const N = data.length;
 
   // Grid polygons
@@ -817,50 +936,83 @@ function drawRadar(svgId, title, metrics, getValue, selection, displayNames){
     }
   }
 
-  // Polygons per selected instrument
-  selection.forEach((name, idx)=>{
-    const col = cmap[idx % cmap.length];
+  // Build point arrays for all selected items
+  const allPts = selection.map((name, idx) => {
     const pts = [];
-    const valuesForTip = [];
     for (let i=0; i<N; i++){
       const s = data[i].scores[idx];
-      const rv = data[i].raw[idx];
-      valuesForTip.push(`${data[i].label.padEnd(18)} ${fmtRadarVal(rv, data[i].unit)}`);
-      if (s == null) continue;
-      const r = R * Math.max(0.04, Math.min(1, s));  // never collapse to centre
+      if (s == null){ pts.push(null); continue; }
+      const r = R * Math.max(0.04, Math.min(1, s));
       const a = (i/N)*2*Math.PI - Math.PI/2;
       pts.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
     }
+    return pts;
+  });
+
+  // Prepare table data for tooltip (built once, used by all hover targets)
+  const tipHeaders = selection.map((name, idx) => ({
+    name: displayNames ? displayNames(name) : name,
+    color: cmap[idx % cmap.length]
+  }));
+  const tipRows = data.map(m => ({
+    label: m.label + (m.unit ? ` (${m.unit})` : ""),
+    values: selection.map((_, idx) => fmtRadarVal(m.raw[idx], ""))
+  }));
+
+  // Draw filled polygons (no pointer events — just visual)
+  selection.forEach((name, idx) => {
+    const col = cmap[idx % cmap.length];
+    const pts = allPts[idx].filter(p => p !== null);
     if (pts.length < 2) return;
-    const poly = svg.append("polygon").attr("class","radar-poly")
+    svg.append("polygon").attr("class","radar-poly")
        .attr("points", pts.map(p=>p.join(",")).join(" "))
-       .attr("fill", col).attr("stroke", col).style("cursor","pointer");
-    const dispName = displayNames ? displayNames(name) : name;
-    poly.on("mouseenter mousemove", function(e){
-      showTip(`${dispName}\n` + valuesForTip.join("\n"), e);
-    }).on("mouseleave", hideTip);
+       .attr("fill", col).attr("stroke", col)
+       .style("pointer-events","none");  // hover only on thick stroke below
+  });
+
+  // Draw thick transparent stroke as hover target (on top of fill)
+  selection.forEach((name, idx) => {
+    const col = cmap[idx % cmap.length];
+    const pts = allPts[idx].filter(p => p !== null);
+    if (pts.length < 2) return;
+    svg.append("polygon")
+       .attr("points", pts.map(p=>p.join(",")).join(" "))
+       .attr("fill", "none")
+       .attr("stroke", col)
+       .attr("stroke-width", 10)
+       .attr("stroke-opacity", 0)          // invisible but catchable
+       .style("cursor","pointer")
+       .on("mouseenter mousemove", function(e){ showTipTable(tipHeaders, tipRows, idx, e); })
+       .on("mouseleave", hideTip);
   });
 }
 
 function drawInstrRadar(){
+  const blend = parseFloat(document.getElementById("radar-blend-instr")?.value ?? 1);
   drawRadar("radar-instr", "Instrument performance", RADAR_INSTR_METRICS,
-            (name, key)=>{
-              const inst = INSTR.find(i => i.name===name);
-              return inst ? inst.derived[key] : NaN;
-            }, SEL_INSTR);
+            (name, key)=>{ const i = INSTR.find(x=>x.name===name); return i ? i.derived[key] : NaN; },
+            SEL_INSTR, blend);
 }
 function drawDetRadar(){
+  const blend = parseFloat(document.getElementById("radar-blend-det")?.value ?? 1);
   drawRadar("radar-det", "Detector profile", RADAR_DET_METRICS,
             (name, key)=>{
-              const det = DETECTORS.find(d => d.name === name);
-              return det ? det[key] : NaN;
-            }, SEL_DET);
+              const d = DETECTORS.find(x => x.name === name);
+              if (!d) return NaN;
+              return deriveDet(d)[key] ?? NaN;
+            },
+            SEL_DET, blend);
 }
 
 /* ============================================================================
    MAIN
    ========================================================================== */
 function redrawAll(){ drawScatter(); drawInstrRadar(); drawDetRadar(); }
+
+const FALLBACK_DEFAULTS = {
+  instruments: ["GALEX FUV","SCWI SPEC","UVEX FUV","FIREBall-2 2025"],
+  detectors:   ["qCCD1","qCCD2","EMCCD201"]
+};
 
 async function main(){
   try {
@@ -873,6 +1025,12 @@ async function main(){
   }
   document.getElementById("status").textContent = `${INSTR.length} instruments, ${DETECTORS.length} detectors loaded.`;
 
+  // Pre-compute global min/max for radar normalisation (stable across any selection)
+  computeRadarGlobals(RADAR_INSTR_METRICS, INSTR,
+    (name, key) => { const i = INSTR.find(x=>x.name===name); return i ? i.derived[key] : NaN; });
+  computeRadarGlobals(RADAR_DET_METRICS, DETECTORS,
+    (name, key) => { const d = DETECTORS.find(x=>x.name===name); return d ? (deriveDet(d)[key] ?? NaN) : NaN; });
+
   // --- Scatter setup -------------------------------------------------------
   fillSelect("sc-x",     SCATTER_AXES, "PSF_RMS_det");
   fillSelect("sc-y",     SCATTER_AXES, "Spectral_resolution");
@@ -884,13 +1042,27 @@ async function main(){
 
   // --- Pickers + chips -----------------------------------------------------
   fillPickerOptions("instr-picker", INSTR.map(i => i.name));
-  fillPickerOptions("det-picker",   DETECTORS.map(d => d.name));
+  fillPickerOptions("det-picker", DETECTORS.map(d => d.name).filter(n => !/^temp=/i.test(n)));
 
-  // Pre-select first 3 instruments + representative detector subset
-  INSTR.slice(0, 3).forEach(i => SEL_INSTR.push(i.name));
-  const DET_DEFAULT = ["temp=-110","CMOS UVEX","Skipper","Perfect","EMCCD201","CCD MUSE","H2RG","MAMA"];
-  DET_DEFAULT.forEach(n => { if (DETECTORS.some(d => d.name===n)) SEL_DET.push(n); });
-  if (!SEL_DET.length) DETECTORS.slice(0,6).forEach(d => SEL_DET.push(d.name));
+  // Load defaults from config file, fall back to hardcoded list
+  let defaults = FALLBACK_DEFAULTS;
+  try {
+    const r = await fetch("data/comparison_defaults.json");
+    if (r.ok) defaults = await r.json();
+  } catch(e){ /* file:// or network error — use fallback */ }
+
+  // Pre-select instruments
+  const instrDefaults = defaults.instruments && defaults.instruments.length
+    ? defaults.instruments
+    : INSTR.slice(0, 3).map(i => i.name);
+  instrDefaults.forEach(n => { if (INSTR.some(i => i.name===n)) SEL_INSTR.push(n); });
+  if (!SEL_INSTR.length) INSTR.slice(0,3).forEach(i => SEL_INSTR.push(i.name));
+
+  // Pre-select detectors from config
+  const detDefaults = defaults.detectors || [];
+  detDefaults.forEach(n => { if (DETECTORS.some(d => d.name===n)) SEL_DET.push(n); });
+  if (!SEL_DET.length)
+    DETECTORS.filter(d => !/^temp=/i.test(d.name)).slice(0,4).forEach(d => SEL_DET.push(d.name));
 
   // Scatter preset buttons
   document.querySelectorAll(".preset-btn").forEach(btn => {
@@ -914,6 +1086,9 @@ async function main(){
   document.getElementById("det-clear").addEventListener("click", ()=>{
     SEL_DET.length = 0; renderChips("det-chips", SEL_DET, drawDetRadar); drawDetRadar();
   });
+
+  document.getElementById("radar-blend-instr").addEventListener("input", drawInstrRadar);
+  document.getElementById("radar-blend-det").addEventListener("input", drawDetRadar);
 
   window.addEventListener("resize", ()=> requestAnimationFrame(()=>requestAnimationFrame(redrawAll)));
   requestAnimationFrame(()=>requestAnimationFrame(redrawAll));
