@@ -1076,7 +1076,11 @@ function simulateImage(p){
   const isCubeSpec = EMISSION_CUBES_ENABLED && wantedSpec.startsWith(CUBE_KEY_PREFIX);
   const cubeKey    = isCubeSpec ? wantedSpec.slice(CUBE_KEY_PREFIX.length) : null;
   const cubeMeta   = (cubeKey && CUBE_INDEX) ? CUBE_INDEX[cubeKey] : null;
-  const cubeData   = (cubeKey && CUBE_CACHE[cubeKey]) ? CUBE_CACHE[cubeKey] : null;
+  // Pick the FOV variant closest to the detector FOV (H pix × pixel_scale arcsec)
+  const detFov     = H * pixel_scale;  // arcsec
+  const cubeFovKey = cubeMeta ? pickCubeFov(cubeMeta, detFov) : null;
+  const cubeCacheKey = cubeKey && cubeFovKey ? `${cubeKey}@${cubeFovKey}` : null;
+  const cubeData   = cubeCacheKey ? CUBE_CACHE[cubeCacheKey] : null;
 
   if (!isCubeSpec){
     if (wantedSpec === "Baseline emission line" || !SPECTRA_DATA || !SPECTRA_DATA.spectra[wantedSpec]){
@@ -1142,17 +1146,23 @@ function simulateImage(p){
     const detWave_nm = new Float64Array(W);
     for (let i=0;i<W;i++) detWave_nm[i] = wavelengths[i] / 10;  // Å → nm
 
-    // Spatial mapping: cube spatial extent = meta.spatial_arcsec arcsec for nx pixels
-    // Detector spatial extent = H * pixel_scale arcsec, centred
-    const cubeArcsec = cubeMeta.spatial_arcsec || (nx * 1.0);  // fallback 1"/pix
-    const detArcsec  = H * pixel_scale;   // total detector spatial extent in arcsec
+    // Spatial mapping: the cube was baked at fov_arcsec covering OUT_NY×OUT_NX pixels.
+    // Detector covers H×pixel_scale arcsec. Ratio = fov_baked / detFov pixels.
+    // fov_baked / ny_cube gives arcsec/cube_pixel; divide by pixel_scale → cube pix per det pix
+    const fovBaked  = parseFloat(cubeFovKey) || detFov;
+    const nyCube    = cubeMeta.fov_variants[cubeFovKey].shape[1];
+    const cubePerDet = (fovBaked / nyCube) / pixel_scale;
 
     // Gaussian PSF kernel for spatial convolution (sigma = Rx detector pixels)
     const kRad = Math.max(2, Math.ceil(Rx * 3));
     const psfKernel = new Float64Array(2*kRad+1);
     let psfSum = 0;
-    for (let d=-kRad; d<=kRad; d++){ psfKernel[d+kRad] = Math.exp(-0.5*(d/Math.max(0.1,Rx))**2); psfSum += psfKernel[d+kRad]; }
-    if (psfSum > 0) for (let d=0; d<psfKernel.length; d++) psfKernel[d] /= psfSum;
+    for (let d=-kRad; d<=kRad; d++){
+      const dNorm = d / Math.max(0.1, Rx);
+      psfKernel[d+kRad] = Math.exp(-0.5 * dNorm * dNorm);
+      psfSum += psfKernel[d+kRad];
+    }
+    if (psfSum > 0){ for (let d=0; d<psfKernel.length; d++) psfKernel[d] /= psfSum; }
 
     // For each detector spectral column i, fetch a cube spatial slice and resample onto H rows
     for (let i=0;i<W;i++){
@@ -1167,10 +1177,10 @@ function simulateImage(p){
       const tz   = cz_f - cz0;
 
       // Resample cube spatial column onto H detector rows (bilinear in y)
+      // Detector row j=0..H-1 maps to cube row centred on ny/2, step = cubePerDet
       const sliceH = new Float64Array(H);
       for (let j=0;j<H;j++){
-        // Map detector row j to cube row index (centre-aligned)
-        const cubeY_f = (j / (H-1) - 0.5) * (detArcsec / cubeArcsec) * ny + ny/2;
+        const cubeY_f = ny/2 + (j - H/2) * cubePerDet;
         const cy0 = Math.max(0, Math.min(ny-2, Math.floor(cubeY_f)));
         const cy1 = cy0 + 1;
         const ty  = cubeY_f - cy0;
@@ -1225,8 +1235,8 @@ function simulateImage(p){
   } else {
     // ---- Standard separable path (Gaussian / SED) -------------------------
     // If cube was selected but not yet loaded, trigger async load and fall back to baseline
-    if (isCubeSpec && cubeKey && !cubeData){
-      loadCube(cubeKey).then(() => scheduleUpdate());
+    if (isCubeSpec && cubeKey && cubeFovKey && !cubeData){
+      loadCube(cubeKey, cubeFovKey).then(() => scheduleUpdate());
       for (let i=0;i<W;i++) spectralProfile[i] = gauss1d(i, W/2, PSF_lam);
     }
 
@@ -4247,22 +4257,35 @@ async function loadCubeIndex(){
   console.warn("Could not load cube index — emission cubes unavailable.");
 }
 
-/* Lazy-load one cube binary.  Returns Float32Array(nz×ny×nx) or null on error. */
-async function loadCube(key){
-  if (!EMISSION_CUBES_ENABLED || !CUBE_INDEX || !CUBE_INDEX[key]) return null;
-  if (CUBE_CACHE[key]) return CUBE_CACHE[key];
-  const meta = CUBE_INDEX[key];
+/* Pick the FOV variant (arcsec string key) closest to detFov arcsec. */
+function pickCubeFov(meta, detFov){
+  if (!meta || !meta.fov_variants) return null;
+  const fovs = Object.keys(meta.fov_variants).map(Number).sort((a,b)=>a-b);
+  if (!fovs.length) return null;
+  // Pick smallest FOV that is >= detFov, or the largest if none qualifies
+  for (const f of fovs) if (f >= detFov) return String(f);
+  return String(fovs[fovs.length-1]);
+}
+
+/* Lazy-load one cube binary for a specific FOV variant.
+   cacheKey = "<cubeKey>@<fovKey>"  e.g. "CGM_cube_resampled@60" */
+async function loadCube(cubeKey, fovKey){
+  if (!EMISSION_CUBES_ENABLED || !CUBE_INDEX || !CUBE_INDEX[cubeKey]) return null;
+  const cacheKey = `${cubeKey}@${fovKey}`;
+  if (CUBE_CACHE[cacheKey]) return CUBE_CACHE[cacheKey];
+  const variant = CUBE_INDEX[cubeKey].fov_variants && CUBE_INDEX[cubeKey].fov_variants[fovKey];
+  if (!variant) return null;
   try {
-    const r = await fetch(`data/cubes/${meta.file}`);
+    const r = await fetch(`data/cubes/${variant.file}`);
     if (r.ok){
       const buf = await r.arrayBuffer();
       const arr = new Float32Array(buf);
-      CUBE_CACHE[key] = arr;
-      console.log(`Loaded cube "${key}" (${(buf.byteLength/1024/1024).toFixed(1)} MB)`);
+      CUBE_CACHE[cacheKey] = arr;
+      console.log(`Loaded cube "${cubeKey}" FOV=${fovKey}" (${(buf.byteLength/1024/1024).toFixed(1)} MB)`);
       return arr;
     }
   } catch(e){}
-  console.warn(`Failed to load cube "${key}"`);
+  console.warn(`Failed to load cube "${cubeKey}" FOV=${fovKey}"`);
   return null;
 }
 
