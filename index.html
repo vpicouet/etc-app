@@ -192,6 +192,18 @@
   .slider-row .val{font-size:11px;text-align:right;color:var(--text);
     font-variant-numeric:tabular-nums;font-family:var(--font-mono)}
   .flags-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  /* SDSS object search row */
+  .sdss-row{display:flex;gap:4px;align-items:center;margin-bottom:4px;flex-wrap:wrap}
+  .sdss-row input[type="text"]{flex:1;min-width:80px;font:12px var(--font-mono);
+    padding:2px 5px;border:1px solid var(--line-strong);border-radius:var(--radius-sm);
+    background:var(--panel);color:var(--text)}
+  .sdss-row button{flex:0 0 auto;padding:2px 7px;font-size:11px}
+  #sdss-status{font-size:10.5px;color:var(--muted);width:100%;font-family:var(--font-mono)}
+  #sdss-status.ok{color:var(--accent)}
+  #sdss-status.err{color:var(--error)}
+  /* Hide SDSS search when detector is outside SDSS range */
+  body:not([data-sdss-avail="true"]) .sdss-row,
+  body:not([data-sdss-avail="true"]) #sdss-status{display:none!important}
 
   /* Plot */
   #status{font-size:11px;color:var(--muted);padding:2px 4px;flex:0 0 auto;font-family:var(--font-mono)}
@@ -754,50 +766,94 @@ function parseUserCSV(text){
   return out;
 }
 
-/* Attach a "+ Load CSV…" sentinel option to an existing <select> element.
-   When the user picks it, a file picker opens. On load, onLoaded(key, array) is called
-   where array is the parsed+resampled curve. The new option (with key as value) is inserted
-   and selected. Returns nothing. */
-function attachCsvLoader(selectId, onLoaded){
-  const sel = document.getElementById(selectId);
-  if (!sel) return;
-  const SENTINEL = "__load_csv__";
-  const opt = document.createElement("option");
-  opt.value = SENTINEL;
-  opt.textContent = "+ Load CSV…";
-  sel.appendChild(opt);
+/* Build (once) a shared <dialog> for CSV format reminders.
+   Returns {dialog, body, onOk} where onOk is set before each showModal() call. */
+let _csvDialog = null;
+function getCsvDialog(){
+  if (_csvDialog) return _csvDialog;
+  const dlg = document.createElement("dialog");
+  Object.assign(dlg.style, {
+    background:"var(--panel,#1e1e2e)", color:"var(--text,#cdd6f4)",
+    border:"1px solid var(--accent,#7aa2f7)", borderRadius:"8px",
+    padding:"18px 20px", maxWidth:"360px", fontSize:"12px", lineHeight:"1.65"
+  });
 
+  const body = document.createElement("div");
+  dlg.appendChild(body);
+
+  const btnRow = document.createElement("div");
+  Object.assign(btnRow.style, { display:"flex", gap:"8px", justifyContent:"flex-end", marginTop:"14px" });
+
+  const btnCancel = document.createElement("button");
+  btnCancel.textContent = "Cancel";
+  Object.assign(btnCancel.style, { padding:"3px 12px", cursor:"pointer" });
+
+  const btnOk = document.createElement("button");
+  btnOk.textContent = "OK — choose file";
+  Object.assign(btnOk.style, { padding:"3px 12px", cursor:"pointer", fontWeight:"bold" });
+
+  btnRow.appendChild(btnCancel);
+  btnRow.appendChild(btnOk);
+  dlg.appendChild(btnRow);
+  document.body.appendChild(dlg);
+
+  const state = { dialog: dlg, body, onOk: null };
+  btnCancel.addEventListener("click", () => dlg.close());
+  btnOk.addEventListener("click", () => { dlg.close(); if (state.onOk) state.onOk(); });
+  _csvDialog = state;
+  return state;
+}
+
+/* Append a "Load" button next to a dropdown row.
+   lines: array of strings shown as the format reminder (plain text, one per paragraph).
+   onLoaded(key, array) called after successful parse. */
+function attachCsvLoader(selectId, d3RowSel, lines, onLoaded){
   const input = document.createElement("input");
   input.type = "file";
   input.accept = ".csv,.txt";
   input.style.display = "none";
   document.body.appendChild(input);
 
-  sel.addEventListener("change", function(){
-    if (sel.value !== SENTINEL) return;
-    // Reset visual selection to previous value so it doesn't stay on sentinel
-    sel.value = sel.options[sel.selectedIndex - 1]?.value || sel.options[0]?.value || "";
-    input.click();
-  });
+  d3RowSel.append("button")
+    .style("padding","1px 7px").style("font-size","11px").style("cursor","pointer")
+    .style("border","1px solid var(--line)").style("border-radius","3px")
+    .style("background","var(--panel)").style("color","var(--text-soft)").style("white-space","nowrap")
+    .text("Load")
+    .on("click", function(e){
+      e.preventDefault();
+      const dlg = getCsvDialog();
+      // Populate body with plain-text paragraphs
+      while (dlg.body.firstChild) dlg.body.removeChild(dlg.body.firstChild);
+      lines.forEach((line, i) => {
+        const p = document.createElement(i === 0 ? "strong" : "p");
+        p.textContent = line;
+        if (i === 0) { const br = document.createElement("div"); br.style.marginBottom = "6px"; dlg.body.appendChild(p); dlg.body.appendChild(br); }
+        else dlg.body.appendChild(p);
+        p.style.margin = "2px 0";
+      });
+      dlg.onOk = () => input.click();
+      dlg.dialog.showModal();
+    });
 
   input.addEventListener("change", function(){
     const file = input.files[0];
     if (!file) return;
     input.value = "";
     const reader = new FileReader();
-    reader.onload = function(e){
-      const arr = parseUserCSV(e.target.result);
+    reader.onload = function(ev){
+      const arr = parseUserCSV(ev.target.result);
       if (!arr){ alert("Could not parse CSV — expected 2 columns: wavelength, value."); return; }
-      const key = "user:" + file.name.replace(/\.csv$/i,"").replace(/\.txt$/i,"");
-      // Remove any previous user option with the same key
-      const prev = sel.querySelector(`option[value="${CSS.escape(key)}"]`);
-      if (prev) prev.remove();
-      // Insert before the sentinel
-      const newOpt = document.createElement("option");
-      newOpt.value = key;
-      newOpt.textContent = key;
-      sel.insertBefore(newOpt, sel.querySelector(`option[value="${SENTINEL}"]`));
-      sel.value = key;
+      const key = "user:" + file.name.replace(/\.(csv|txt)$/i,"");
+      const sel = document.getElementById(selectId);
+      if (sel){
+        const prev = sel.querySelector(`option[value="${CSS.escape(key)}"]`);
+        if (prev) prev.remove();
+        const newOpt = document.createElement("option");
+        newOpt.value = key;
+        newOpt.textContent = key;
+        sel.appendChild(newOpt);
+        sel.value = key;
+      }
       onLoaded(key, arr);
     };
     reader.readAsText(file);
@@ -1520,7 +1576,9 @@ const STATE = {
   // Per-subplot x-axis zoom (drag-select to zoom, dblclick to reset). Keyed by SVG id.
   subplotZoom: {},
   _lastDomain: {},
-  _subplotZoomAttached: {}
+  _subplotZoomAttached: {},
+  // SDSS-fetched spectrum: {name, wave (Float64Array Å), flux (Float64Array), redshift}
+  fetchedSpectrum: null
 };
 
 function defaultValueFor(p){ return p.log ? Math.pow(10, p.default_log) : p.default; }
@@ -1558,6 +1616,11 @@ async function loadInstruments(sheet_id, sheet_name){
 function applyInstrument(name){
   const d = STATE.instruments.dict[name]; if (!d) return;
   STATE.current_instrument = name;
+  // Reset every param to its default first, then overlay sheet values.
+  // This mirrors Python where each Observation is constructed fresh — it prevents
+  // parameters absent from one instrument's sheet row from keeping a stale value
+  // set by the previously selected instrument.
+  initValuesToDefault();
   for (const k of Object.keys(PARAMS)){
     if (k in d && typeof d[k]==="number" && isFinite(d[k])) STATE.values[k] = d[k];
   }
@@ -1639,12 +1702,48 @@ function buildUI(){
       const inp = row.append("input").attr("type","range").attr("data-key",k)
         .attr("title", tipText)
         .attr("min", p.min).attr("max", p.max).attr("step", step).attr("value", sliderVal);
-      const val = row.append("div").attr("class","val").attr("data-val",k).text(p.fmt(v));
+      const val = row.append("div").attr("class","val").attr("data-val",k).text(p.fmt(v))
+        .attr("title","Click to type a value")
+        .style("cursor","text");
       inp.on("input", function(){
         const s = +this.value;
         STATE.values[k] = p.log ? Math.pow(10, s) : s;
         val.text(p.fmt(STATE.values[k]));
         scheduleUpdate();
+      });
+      // Click on the value label → inline number input
+      val.on("click", function(){
+        const node = this;
+        const cur = STATE.values[k];
+        const ni = document.createElement("input");
+        ni.type = "number";
+        ni.value = cur;
+        ni.step = p.log ? "any" : (p.step || "any");
+        Object.assign(ni.style, {
+          width:"72px", fontSize:"inherit", background:"var(--bg)", color:"var(--text)",
+          border:"1px solid var(--accent)", borderRadius:"3px", padding:"0 3px",
+          textAlign:"right", fontFamily:"inherit"
+        });
+        node.textContent = "";
+        node.appendChild(ni);
+        ni.focus(); ni.select();
+        function commit(){
+          const raw = parseFloat(ni.value);
+          if (isFinite(raw)){
+            // Clamp to the param's physical range (converted from log if needed)
+            const lo = p.log ? Math.pow(10, p.min) : p.min;
+            const hi = p.log ? Math.pow(10, p.max) : p.max;
+            STATE.values[k] = Math.min(hi, Math.max(lo, raw));
+            syncSlider(k);
+            scheduleUpdate();
+          }
+          node.textContent = p.fmt(STATE.values[k]);
+        }
+        ni.addEventListener("keydown", function(e){
+          if (e.key === "Enter"){ e.preventDefault(); commit(); }
+          if (e.key === "Escape"){ node.textContent = p.fmt(STATE.values[k]); }
+        });
+        ni.addEventListener("blur", commit);
       });
     }
     // (IFS, Spectrograph and γ-Threshold flag checkboxes are hidden — the FLAGS state is still driven by
@@ -1663,6 +1762,200 @@ function syncSlider(k){
 }
 
 /* Build Image (display) options UI */
+/* ============================================================================
+   SDSS spectrum fetch — SIMBAD name resolution + SDSS spectral query
+   ========================================================================== */
+
+// Returns true when the detector window overlaps the SDSS spectral range (3800–9200 Å).
+function detectorInSdssDomain(){
+  const wav_nm = STATE.values.wavelength || 200;
+  const bw     = STATE.values.Bandwidth  || 200;  // Å
+  const wMin   = 10*wav_nm - bw/2;
+  const wMax   = 10*wav_nm + bw/2;
+  return wMax > 3800 && wMin < 9200;
+}
+
+// ---------- MAST invoke helper ----------
+async function mastInvoke(service, params){
+  const body = new URLSearchParams();
+  body.set("request", JSON.stringify({ service, params, format:"json", pagesize:50 }));
+  const r = await fetch("https://mast.stsci.edu/api/v0/invoke", { method:"POST", body });
+  if (!r.ok) throw new Error(`MAST ${service} HTTP ${r.status}`);
+  return r.json();
+}
+
+// Step 1 — MAST name lookup → {ra, dec}
+async function mastNameLookup(name){
+  const j = await mastInvoke("Mast.Name.Lookup", { input: name, format:"json" });
+  const c = j.resolvedCoordinate;
+  if (!c || !c.length) throw new Error(`"${name}" not resolved by MAST`);
+  return { ra: +c[0].ra, dec: +c[0].decl };
+}
+
+// Step 2 — SIMBAD TAP redshift lookup (CORS-enabled)
+async function simbadRedshift(name){
+  const adql = `SELECT rvz_redshift FROM basic JOIN ident ON ident.oidref=basic.oid WHERE ident.id='${name.replace(/'/g,"''")}'`;
+  const url = "https://simbad.u-strasbg.fr/simbad/sim-tap/sync?REQUEST=doQuery&LANG=ADQL&FORMAT=json&QUERY=" + encodeURIComponent(adql);
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return 0;
+    const j = await r.json();
+    if (!j.data || !j.data.length) return 0;
+    const z = j.data[0][0];
+    return isFinite(+z) ? +z : 0;
+  } catch(_){ return 0; }
+}
+
+// Step 3 — MAST cone search → SDSS spectrum obsid
+async function mastFindSdss(ra, dec){
+  const j = await mastInvoke("Mast.Caom.Cone", { ra, dec, radius: 0.02 });
+  const rows = (j.data || []).filter(d =>
+    d.obs_collection === "SDSS" &&
+    d.dataproduct_type === "spectrum" &&
+    (d.obs_id || "").startsWith("sdss_spectro_")
+  );
+  if (!rows.length) throw new Error("No SDSS spectrum within 1.2′");
+  return rows[0].obsid;
+}
+
+// Step 4 — MAST products → spec-lite FITS URI
+async function mastSpecUri(obsid){
+  const j = await mastInvoke("Mast.Caom.Products", { obsid: String(obsid) });
+  const rows = (j.data || []).filter(d =>
+    (d.productSubGroupDescription || "").toUpperCase() === "SPECTRA" &&
+    (d.dataURI || "").includes("spec-lite")
+  );
+  if (!rows.length) throw new Error("spec-lite product not found for obsid " + obsid);
+  return rows[0].dataURI;   // e.g. "mast:SDSS/sdss/spectro/1070/52591/0072/spec-lite-..."
+}
+
+// Step 5 — Download FITS and parse HDU1 binary table → {wave (Å), flux}
+async function parseFitsSpectrum(uri){
+  const url = "https://mast.stsci.edu/api/v0/Download/file?uri=" + encodeURIComponent(uri);
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`FITS download HTTP ${r.status}`);
+  const buf = await r.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+
+  const dec = new TextDecoder("ascii");
+  function readCards(offset){
+    const meta = {};
+    let i = offset;
+    while (i + 80 <= bytes.length){
+      const card = dec.decode(bytes.slice(i, i+80));
+      i += 80;
+      if (card.startsWith("END     ")) break;
+      const key = card.slice(0,8).trim();
+      const val = card.slice(10,30).trim().replace(/\//,"").trim();
+      meta[key] = val;
+    }
+    // round up to next 2880-byte block
+    const blockEnd = offset + Math.ceil((i - offset) / 2880) * 2880;
+    return { meta, nextHdu: blockEnd };
+  }
+
+  // HDU0 (primary) — skip
+  const hdu0 = readCards(0);
+  // HDU1 — binary table
+  const hdu1 = readCards(hdu0.nextHdu);
+  const m = hdu1.meta;
+  const naxis1 = parseInt(m.NAXIS1 || "0");  // row width in bytes
+  const naxis2 = parseInt(m.NAXIS2 || "0");  // number of rows
+  const tfields = parseInt(m.TFIELDS || "0");
+
+  // Find loglam and flux column indices (1-based in FITS, 0-based here)
+  let loglamCol = -1, fluxCol = -1, byteOffset = 0;
+  const colOffsets = [];
+  const colFormats = [];
+  for (let c = 1; c <= tfields; c++){
+    const ttype = (m[`TTYPE${c}`] || "").replace(/'/g,"").trim().toLowerCase();
+    const tform = (m[`TFORM${c}`] || "").replace(/'/g,"").trim();
+    colOffsets.push(byteOffset);
+    colFormats.push(tform);
+    if (ttype === "loglam")  loglamCol = c-1;
+    if (ttype === "flux")    fluxCol   = c-1;
+    // Compute column byte width: E=4, D=8, J=4, I=2, B=1, rE=r*4 ...
+    const m2 = tform.match(/^(\d*)([EDJIB])/);
+    const repeat = m2 ? (parseInt(m2[1])||1) : 1;
+    const sz = {"E":4,"D":8,"J":4,"I":2,"B":1}[m2?m2[2]:"E"] || 4;
+    byteOffset += repeat * sz;
+  }
+  if (loglamCol < 0 || fluxCol < 0)
+    throw new Error("loglam or flux column not found in FITS HDU1");
+
+  const dataStart = hdu1.nextHdu;
+  const view = new DataView(buf);
+  const wave = new Float64Array(naxis2);
+  const flux  = new Float64Array(naxis2);
+  for (let row = 0; row < naxis2; row++){
+    const base = dataStart + row * naxis1;
+    wave[row] = Math.pow(10, view.getFloat32(base + colOffsets[loglamCol], false));
+    flux[row]  = view.getFloat32(base + colOffsets[fluxCol], false);
+  }
+  return { wave, flux };
+}
+
+async function fetchSdssObject(name){
+  const status = document.getElementById("sdss-status");
+  status.className = ""; status.textContent = `Resolving "${name}"…`;
+
+  // Step 1: name → RA/Dec via MAST
+  let ra, dec;
+  try {
+    ({ ra, dec } = await mastNameLookup(name));
+    status.textContent = `RA=${ra.toFixed(4)} Dec=${dec.toFixed(4)} — querying SDSS…`;
+  } catch(e){ status.className="err"; status.textContent=`Name lookup: ${e.message}`; return; }
+
+  // Step 1b: redshift from SIMBAD (best-effort, non-blocking)
+  const redshift = await simbadRedshift(name);
+
+  // Step 2: cone search → obsid
+  let obsid;
+  try {
+    obsid = await mastFindSdss(ra, dec);
+    status.textContent = `SDSS obsid=${obsid} — fetching products…`;
+  } catch(e){ status.className="err"; status.textContent=`SDSS search: ${e.message}`; return; }
+
+  // Step 3: products → FITS URI
+  let uri;
+  try {
+    uri = await mastSpecUri(obsid);
+    status.textContent = `Downloading spectrum…`;
+  } catch(e){ status.className="err"; status.textContent=`Products: ${e.message}`; return; }
+
+  // Step 4: download + parse FITS
+  let wave, flux;
+  try {
+    ({ wave, flux } = await parseFitsSpectrum(uri));
+  } catch(e){ status.className="err"; status.textContent=`FITS: ${e.message}`; return; }
+
+  // Inject into SPECTRA_DATA (baked SED grid 80–1100 nm × 4000 pts)
+  const key = `SDSS: ${name}`;
+  if (!SPECTRA_DATA){ status.className="err"; status.textContent="Spectra not loaded yet"; return; }
+  if (!SPECTRA_DATA.spectra) SPECTRA_DATA.spectra = {};
+  const grid = SPECTRA_DATA.grid;
+  const nPts = grid.n, dNm = (grid.max_nm - grid.min_nm) / (nPts-1);
+  const resampled = new Array(nPts);
+  for (let i = 0; i < nPts; i++){
+    const lamA = (grid.min_nm + i*dNm) * 10;  // nm → Å
+    let lo = 0, hi = wave.length - 1;
+    while (hi - lo > 1){ const m = (lo+hi)>>1; wave[m] <= lamA ? lo=m : hi=m; }
+    const dw = wave[hi] - wave[lo];
+    const t  = dw > 0 ? (lamA - wave[lo]) / dw : 0;
+    resampled[i] = (lamA >= wave[0] && lamA <= wave[wave.length-1])
+      ? flux[lo]*(1-t) + flux[hi]*t : 0;
+  }
+  const mx = resampled.reduce((a,v)=>Math.max(a,Math.abs(v)),0);
+  SPECTRA_DATA.spectra[key] = mx > 0 ? resampled.map(v=>v/mx) : resampled;
+
+  STATE.fetchedSpectrum = { name: key, redshift };
+  IMG_FLAGS.spectrum = key;
+  status.className = "ok";
+  status.textContent = `✓ ${key} (${wave.length} pts, z=${redshift.toFixed(4)})`;
+  buildImageOptionsUI();
+  scheduleUpdate();
+}
+
 function buildImageOptionsUI(){
   const root = d3.select("#img-opts");
   root.selectAll("*").remove();
@@ -1675,7 +1968,7 @@ function buildImageOptionsUI(){
     const sel = row.append("select").attr("id",id).style("flex","1").style("min-width","0");
     options.forEach(o => sel.append("option").attr("value",o).text(o));
     sel.property("value", currentVal).on("change", function(){ onChange(this.value); scheduleUpdate(); });
-    return sel;
+    return row;
   }
 
   // Display mode
@@ -1687,13 +1980,20 @@ function buildImageOptionsUI(){
 
   // Spectrum
   const spectraNames = ["Baseline emission line"].concat(SPECTRA_DATA ? Object.keys(SPECTRA_DATA.spectra) : []);
-  dropdown("Spectrum", "img-spec",
+  const specRow = dropdown("Spectrum", "img-spec",
     spectraNames, IMG_FLAGS.spectrum,
     v => { IMG_FLAGS.spectrum = v; updateImgDependentUI(); },
     "Source spectrum. \"Baseline emission line\" = Gaussian centred on the observed λ. Other entries are real SEDs (QSO HST/FOS, COSMOS galaxies, Salvato QSO templates) resampled at bake-time.");
-  attachCsvLoader("img-spec", (key, arr) => {
+  attachCsvLoader("img-spec", specRow, [
+    "Source spectrum — expected format:",
+    "2 columns: wavelength, flux  (header row optional)",
+    "Wavelength units: auto-detected — Angstroms (> 2000), nm (50–2000), or microns (< 50)",
+    "Flux: any unit — the curve is peak-normalised to 1 internally",
+    "Example:   200.0  0.00",
+    "           210.0  0.45",
+    "           220.0  1.00"
+  ], (key, arr) => {
     if (!SPECTRA_DATA.spectra) SPECTRA_DATA.spectra = {};
-    // Peak-normalise like the baked spectra
     const mx = Math.max(...arr.map(Math.abs));
     SPECTRA_DATA.spectra[key] = mx > 0 ? arr.map(v => v/mx) : arr;
     IMG_FLAGS.spectrum = key;
@@ -1701,16 +2001,39 @@ function buildImageOptionsUI(){
     scheduleUpdate();
   });
 
+  // SDSS object search (always built; shown/hidden via CSS data-sdss-avail on body)
+  {
+    const sdssWrap = wrap.append("div").attr("class","sdss-row");
+    sdssWrap.append("span").style("font-size","11px").style("color","var(--muted)").style("white-space","nowrap").text("SDSS object ");
+    const inp = sdssWrap.append("input").attr("type","text").attr("id","sdss-obj-input")
+      .attr("placeholder","e.g. NGC 1068, Mrk 421")
+      .attr("title","Type an object name — SIMBAD resolves it, SDSS downloads the spectrum (3800–9200 Å)");
+    sdssWrap.append("button").text("Load")
+      .on("click", function(){
+        const name = document.getElementById("sdss-obj-input").value.trim();
+        if (name) fetchSdssObject(name);
+      });
+    inp.on("keydown", function(e){ if (e.key === "Enter"){ const n = this.value.trim(); if (n) fetchSdssObject(n); } });
+    wrap.append("div").attr("id","sdss-status");
+  }
+
   // Atm
   const atmNames = SPECTRA_DATA ? Object.keys(SPECTRA_DATA.atm) : [];
   if (atmNames.length){
-    dropdown("Atm curve", "img-atm-kind",
+    const atmRow = dropdown("Atm curve", "img-atm-kind",
       atmNames, IMG_FLAGS.atm_kind,
       v => IMG_FLAGS.atm_kind = v,
       "Atmospheric transmission curve (only used when \"Atmospheric absorption\" is enabled).");
-    attachCsvLoader("img-atm-kind", (key, arr) => {
+    attachCsvLoader("img-atm-kind", atmRow, [
+      "Atmospheric transmission — expected format:",
+      "2 columns: wavelength, transmission  (header row optional)",
+      "Wavelength units: auto-detected — Angstroms (> 2000), nm (50–2000), or microns (< 50)",
+      "Transmission: values between 0 (opaque) and 1 (transparent)",
+      "Example:   200.0  0.00",
+      "           210.0  0.35",
+      "           220.0  0.82"
+    ], (key, arr) => {
       if (!SPECTRA_DATA.atm) SPECTRA_DATA.atm = {};
-      // Clip to [0, 1] — transmission
       SPECTRA_DATA.atm[key] = arr.map(v => Math.min(1, Math.max(0, v)));
       IMG_FLAGS.atm_kind = key;
       scheduleUpdate();
@@ -1721,8 +2044,8 @@ function buildImageOptionsUI(){
   {
     const thRow = wrap.append("label").attr("class","kv").style("display","flex").style("gap","6px")
       .style("margin-bottom","4px").style("align-items","center")
-      .attr("title","Load a user-supplied end-to-end throughput curve CSV (2 columns: wavelength, throughput 0–1). Overrides the baked instrument curve when Throughput(λ) is enabled.")
-      .text("Throughput CSV ");
+      .attr("title","Load a user-supplied end-to-end throughput curve CSV. Overrides the baked instrument curve when Throughput(λ) is enabled.")
+      .text("Throughput ");
     const thSel = thRow.append("select").attr("id","img-throughput-csv").style("flex","1").style("min-width","0");
     thSel.append("option").attr("value","").text("(instrument / Gaussian)");
     thSel.property("value", IMG_FLAGS.user_throughput_key || "");
@@ -1730,9 +2053,16 @@ function buildImageOptionsUI(){
       IMG_FLAGS.user_throughput_key = this.value || "";
       scheduleUpdate();
     });
-    attachCsvLoader("img-throughput-csv", (key, arr) => {
+    attachCsvLoader("img-throughput-csv", thRow, [
+      "End-to-end throughput — expected format:",
+      "2 columns: wavelength, throughput  (header row optional)",
+      "Wavelength units: auto-detected — Angstroms (> 2000), nm (50–2000), or microns (< 50)",
+      "Throughput: 0 to 1  (QE × optics × detector, peak-normalised internally)",
+      "Example:   190.0  0.00",
+      "           200.0  0.12",
+      "           210.0  0.25"
+    ], (key, arr) => {
       if (!SPECTRA_DATA.throughput_per_instrument) SPECTRA_DATA.throughput_per_instrument = {};
-      // Clip to [0, 1.5]
       SPECTRA_DATA.throughput_per_instrument[key] = arr.map(v => Math.min(1.5, Math.max(0, v)));
       IMG_FLAGS.user_throughput_key = key;
       scheduleUpdate();
@@ -2320,7 +2650,10 @@ function drawImageView(){
   pa.spectrum  = IMG_FLAGS.spectrum;
   pa.atm_kind  = IMG_FLAGS.atm_kind;
   pa.sky_kind  = IMG_FLAGS.sky_kind;
-  pa.Redshift  = STATE.values.Redshift || 0;
+  // Use SIMBAD redshift for SDSS-fetched spectra, fall back to slider value
+  pa.Redshift = (STATE.fetchedSpectrum && IMG_FLAGS.spectrum === STATE.fetchedSpectrum.name)
+    ? STATE.fetchedSpectrum.redshift
+    : (STATE.values.Redshift || 0);
   // Detector image size (kept fixed; you can change to scale with viewport)
   pa.W = 500; pa.H = 100;
   // Fresh realisation on each update — change seed deterministically so slider movement shows noise diversity
@@ -3029,7 +3362,9 @@ function drawIfsView(){
   pa.atmlambda = IMG_FLAGS.atmlambda; pa.QElambda = IMG_FLAGS.QElambda;
   pa.sky_lines = IMG_FLAGS.sky_lines; pa.source_im = IMG_FLAGS.source_im;
   pa.spectrum = IMG_FLAGS.spectrum; pa.atm_kind = IMG_FLAGS.atm_kind; pa.sky_kind = IMG_FLAGS.sky_kind;
-  pa.Redshift = STATE.values.Redshift || 0;
+  pa.Redshift = (STATE.fetchedSpectrum && IMG_FLAGS.spectrum === STATE.fetchedSpectrum.name)
+    ? STATE.fetchedSpectrum.redshift
+    : (STATE.values.Redshift || 0);
   pa.W = 500; pa.H = 100;
   STATE.imgSeed = (STATE.imgSeed + 1) >>> 0;
   pa.seed = STATE.imgSeed;
@@ -3415,6 +3750,8 @@ function updateIfsTabVisibility(){
 }
 
 function doUpdate(){
+  // Update SDSS search visibility (depends on wavelength + Bandwidth sliders)
+  document.body.setAttribute("data-sdss-avail", detectorInSdssDomain() ? "true" : "false");
   const xKey = STATE.xKey, p = PARAMS[xKey]; if (!p) return;
   const xlog = document.getElementById("xlog").checked;
   const xa = p.log ? Math.pow(10, p.min) : p.min;
