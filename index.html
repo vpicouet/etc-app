@@ -457,11 +457,6 @@
       <select id="xaxis" hidden></select>
     </div>
 
-    <div id="inst-warning" style="display:none;align-items:center;gap:6px;padding:4px 8px;background:var(--tab-active-bg);border:1px solid var(--accent);border-radius:4px;font-size:11.5px;margin-bottom:4px;flex-wrap:wrap">
-      <span id="inst-warning-text" style="flex:1;color:var(--text)"></span>
-      <button id="inst-keep-btn" style="padding:2px 8px;font-size:11px" title="Apply new instrument hardware params but keep your current source, strategy and observation parameters">Keep source &amp; strategy</button>
-      <button id="inst-full-btn" style="padding:2px 8px;font-size:11px" title="Reset everything to the new instrument's defaults">Apply all defaults</button>
-    </div>
 
     <details class="acc" id="img-opts-acc">
       <summary>Image options (Spectro image view)</summary>
@@ -4378,6 +4373,42 @@ function buildXAxisOptions(){
     scheduleUpdate();
   });
 }
+function showInstrumentModal(newName){
+  const overlay = document.getElementById("inst-modal-overlay");
+  document.getElementById("inst-modal-text").textContent = `Switching to: ${newName}`;
+  overlay.style.display = "flex";
+
+  // Clone buttons to remove stale listeners
+  ["inst-keep-btn","inst-full-btn"].forEach(id => {
+    const el = document.getElementById(id);
+    const clone = el.cloneNode(true);
+    el.parentNode.replaceChild(clone, el);
+  });
+
+  const close = (keep) => {
+    overlay.style.display = "none";
+    document.removeEventListener("keydown", onKey);
+    applyInstrument(newName, keep);
+    scheduleUpdate();
+  };
+
+  document.getElementById("inst-keep-btn").addEventListener("click", () => close(true));
+  document.getElementById("inst-full-btn").addEventListener("click", () => close(false));
+  // Click outside = keep source & strategy
+  overlay.addEventListener("click", function onOverlay(e){
+    if (e.target === overlay){ overlay.removeEventListener("click", onOverlay); close(true); }
+  });
+
+  const onKey = (e) => {
+    if (e.key === "Enter" || e.key === " "){ e.preventDefault(); close(true); }
+    if (e.key === "Escape"){ close(true); }
+  };
+  document.addEventListener("keydown", onKey);
+
+  // Focus the default button so Enter works immediately
+  document.getElementById("inst-keep-btn").focus();
+}
+
 function buildInstrumentOptions(){
   const sel = d3.select("#instrument"); sel.selectAll("*").remove();
   for (const n of STATE.instruments.colnames) sel.append("option").attr("value",n).text(n);
@@ -4389,24 +4420,7 @@ function buildInstrumentOptions(){
     const newName = this.value;
     // First instrument load (no current instrument yet) → apply silently
     if (!STATE.current_instrument){ applyInstrument(newName, false); scheduleUpdate(); return; }
-    // Show warning banner
-    const warn = document.getElementById("inst-warning");
-    document.getElementById("inst-warning-text").textContent =
-      `Switch to ${newName} — apply its default source & strategy values too?`;
-    warn.style.display = "flex";
-    const keepBtn = document.getElementById("inst-keep-btn");
-    const fullBtn = document.getElementById("inst-full-btn");
-    // Remove previous listeners to avoid stacking
-    const newKeep = keepBtn.cloneNode(true); keepBtn.parentNode.replaceChild(newKeep, keepBtn);
-    const newFull = fullBtn.cloneNode(true); fullBtn.parentNode.replaceChild(newFull, fullBtn);
-    document.getElementById("inst-keep-btn").addEventListener("click", function(){
-      warn.style.display = "none";
-      applyInstrument(newName, true); scheduleUpdate();
-    });
-    document.getElementById("inst-full-btn").addEventListener("click", function(){
-      warn.style.display = "none";
-      applyInstrument(newName, false); scheduleUpdate();
-    });
+    showInstrumentModal(newName);
   });
   applyInstrument(pref, false);
 }
@@ -4706,6 +4720,18 @@ document.getElementById("mob-params-btn").addEventListener("click", function(){
 });
 </script>
 
+<!-- Instrument-change modal -->
+<div id="inst-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:var(--panel);border:1px solid var(--accent);border-radius:8px;padding:20px 24px;max-width:380px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);font-size:13px;color:var(--text)">
+    <div style="font-size:14px;font-weight:600;margin-bottom:10px">Switch instrument</div>
+    <div id="inst-modal-text" style="color:var(--muted);margin-bottom:16px;line-height:1.5"></div>
+    <div style="margin-bottom:16px;font-size:12px;color:var(--muted)">Apply the new instrument's default source &amp; observation strategy values?</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button id="inst-full-btn" style="padding:5px 14px;font-size:12px;background:var(--tab-bg);border:1px solid var(--line);border-radius:4px;color:var(--muted);cursor:pointer">Apply all defaults</button>
+      <button id="inst-keep-btn" style="padding:5px 14px;font-size:12px;background:var(--accent);border:none;border-radius:4px;color:#fff;cursor:pointer;font-weight:600">Keep source &amp; strategy ↵</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
