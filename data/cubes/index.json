@@ -1,10 +1,11 @@
 {
   "lya_cube_merged_with_artificial_source_CU_1pc": {
     "label": "Lya CGM + artificial source",
-    "wave_min": 202.844,
-    "wave_max": 205.159,
+    "wave_min": 177.5,
+    "wave_max": 232.5,
     "wave_n": 500,
-    "native_fov_arcsec": 30.2,
+    "spatial_arcsec": 150.0,
+    "pixel_scale_arcsec": 1.5,
     "shape": [
       500,
       100,
@@ -14,10 +15,11 @@
   },
   "CGM_cube": {
     "label": "CGM cube",
-    "wave_min": 195.0,
-    "wave_max": 219.99,
+    "wave_min": 177.5,
+    "wave_max": 232.5,
     "wave_n": 500,
-    "native_fov_arcsec": 99.0,
+    "spatial_arcsec": 150.0,
+    "pixel_scale_arcsec": 1.5,
     "shape": [
       500,
       100,
@@ -27,10 +29,11 @@
   },
   "galaxy_disk_cube": {
     "label": "Galaxy disk",
-    "wave_min": 195.0,
-    "wave_max": 219.99,
+    "wave_min": 177.5,
+    "wave_max": 232.5,
     "wave_n": 500,
-    "native_fov_arcsec": 99.0,
+    "spatial_arcsec": 150.0,
+    "pixel_scale_arcsec": 1.5,
     "shape": [
       500,
       100,
@@ -40,10 +43,11 @@
   },
   "galaxy_and_cgm_cube": {
     "label": "Galaxy + CGM",
-    "wave_min": 195.0,
-    "wave_max": 219.99,
+    "wave_min": 177.5,
+    "wave_max": 232.5,
     "wave_n": 500,
-    "native_fov_arcsec": 99.0,
+    "spatial_arcsec": 150.0,
+    "pixel_scale_arcsec": 1.5,
     "shape": [
       500,
       100,
@@ -53,10 +57,11 @@
   },
   "cube_01": {
     "label": "cube_01",
-    "wave_min": 184.6,
-    "wave_max": 222.4,
+    "wave_min": 177.5,
+    "wave_max": 232.5,
     "wave_n": 500,
-    "native_fov_arcsec": 116.109,
+    "spatial_arcsec": 150.0,
+    "pixel_scale_arcsec": 1.5,
     "shape": [
       500,
       100,
