@@ -4345,6 +4345,8 @@ function doUpdate(){
   let res;
   try { res = computeObservation(pa); }
   catch(e){ d3.select("#status").classed("err",true).text("Compute error: "+e.message); console.error(e); return; }
+  STATE.lastResult = res;
+  STATE.lastParams  = pa;
   const iCur = argClosest(xArr, STATE.values[xKey]);
   const snrCurStatus = isFinite(res.SNR[iCur]) ? res.SNR[iCur].toFixed(2) : "—";
   d3.select("#status").classed("err",false)
@@ -4566,7 +4568,7 @@ async function main(){
   document.getElementById("snr_res").addEventListener("change", scheduleUpdate);
   document.getElementById("cfg-save").addEventListener("click", ()=>{
     const cfg = {
-      version: 1,
+      version: 2,
       instrument: STATE.current_instrument || "",
       xKey: STATE.xKey,
       xlog: document.getElementById("xlog").classList.contains("on"),
@@ -4574,10 +4576,83 @@ async function main(){
       values: Object.assign({}, STATE.values),
       img_flags: Object.assign({}, IMG_FLAGS),
     };
+
+    // Append noise/SNR report if a result is available
+    if (STATE.lastResult && STATE.lastParams){
+      const res = STATE.lastResult, pa = STATE.lastParams;
+      const x   = res.x, N = res.N;
+      const iCur = argClosest(x, STATE.values[STATE.xKey]);
+      // Helper: round array values for readability
+      const fmt = v => isFinite(v) ? Math.round(v*1000)/1000 : null;
+      const fmtArr = arr => Array.from(arr).map(fmt);
+
+      // Build one entry per x-axis point for full curves, plus a "at_cursor" summary
+      const atCursor = i => ({
+        x_value:            fmt(x[i]),
+        SNR:                fmt(res.SNR[i]),
+        Signal_el_per_pix:  fmt(res.Signal_el[i]),
+        Total_noise_e:      fmt(res.Total_noise_final[i]),
+        noise_breakdown: (()=>{
+          const ep = res.electrons_per_pix[i] || [];
+          const obj = {};
+          NAMES.forEach((n,j) => { obj[n.replace(/ /g,"_")+"_e_per_pix"] = fmt(ep[j]); });
+          return obj;
+        })(),
+        pixels_used:        fmt(res.number_pixels_used[i]),
+        source_size_pix:    fmt(res.source_size[i]),
+        elem_size_pix:      fmt(res.elem_size[i]),
+        SB_lim_per_pix:     fmt(res.SB_lim_per_pix[i]),
+        SB_lim_per_res_elem:fmt(res.SB_lim_per_res[i]),
+        SB_lim_per_source:  fmt(res.SB_lim_per_source[i]),
+      });
+
+      cfg.report = {
+        _note: "Noise budget snapshot — for human reading and AI analysis. Ignored on load.",
+        saved_at:   new Date().toISOString(),
+        instrument: STATE.current_instrument || "",
+        x_axis:     STATE.xKey,
+        SNR_mode:   document.getElementById("snr_res").value,
+        // Key instrument & observation params (human-readable summary)
+        params_summary: {
+          wavelength_nm:        fmt(pa.wavelength),
+          pixel_scale_arcsec:   fmt(pa.pixel_scale),
+          collecting_area_m2:   fmt(pa.Collecting_area),
+          throughput:           fmt(pa.Throughput),
+          atmosphere:           fmt(pa.Atmosphere),
+          PSF_RMS_mask_arcsec:  fmt(pa.PSF_RMS_mask),
+          PSF_RMS_det_arcsec:   fmt(pa.PSF_RMS_det),
+          slitwidth_arcsec:     fmt(pa.Slitwidth),
+          slitlength_arcsec:    fmt(pa.Slitlength),
+          dispersion_A_per_pix: fmt(pa.dispersion),
+          spectral_resolution:  fmt(pa.Spectral_resolution),
+          bandwidth_A:          fmt(pa.Bandwidth),
+          RN_e:                 fmt(pa.RN),
+          dark_e_per_pix_per_h: fmt(pa.Dark_current),
+          EM_gain:              fmt(pa.EM_gain),
+          signal_SB:            fmt(pa.Signal_in),
+          source_size_arcsec:   fmt(pa.Size_source),
+          line_width_A:         fmt(pa.Line_width),
+          exposure_time_s:      fmt(pa.exposure_time),
+          acquisition_time_h:   fmt(pa.acquisition_time),
+          IFS:                  !!pa.IFS,
+          spectrograph:         !!pa.spectrograph,
+        },
+        at_cursor: atCursor(iCur),
+        // Full curves (x + SNR + main noise terms) for plotting or deeper analysis
+        curves: {
+          x:            fmtArr(x),
+          SNR:          fmtArr(res.SNR),
+          Signal_el:    fmtArr(res.Signal_el),
+          Total_noise:  fmtArr(res.Total_noise_final),
+          SB_lim_per_res: fmtArr(res.SB_lim_per_res),
+        },
+      };
+    }
+
     const blob = new Blob([JSON.stringify(cfg, null, 2)], {type:"application/json"});
     const a = Object.assign(document.createElement("a"), {
       href: URL.createObjectURL(blob),
-      download: `etc-config-${(cfg.instrument||"params").replace(/\s+/g,"-")}.json`
+      download: `etc-${(cfg.instrument||"params").replace(/\s+/g,"-")}-${new Date().toISOString().slice(0,10)}.json`
     });
     a.click(); URL.revokeObjectURL(a.href);
   });
