@@ -1174,7 +1174,9 @@ function simulateImage(p){
   // For separable shapes we just need the along-slit profile (spatialProfile[j]).
   // For Bar we need 2D because along-slit profile depends on spectral column (slit position).
   const shape     = (p.source_shape || "Gaussian");
-  const barAngle  = ((p.bar_angle || 0) * Math.PI / 180);
+  const isBar     = shape.startsWith("Bar");
+  const barDeg    = isBar ? parseInt(shape.replace("Bar ","")) || 0 : 0;
+  const barAngle  = barDeg * Math.PI / 180;
   const srcRadius = Math.max(0.01, Size_source) / pixel_scale;  // in detector pixels
 
   // Source radius in detector pixels (without PSF convolution — applied separately below)
@@ -1193,7 +1195,7 @@ function simulateImage(p){
       spatialRaw[j] = Math.pow(1 + (dy/Math.max(0.01,moffatScale))**2, -beta);
     } else if (shape === "Disk"){
       spatialRaw[j] = Math.abs(dy) <= srcRadius ? 1.0 : 0.0;
-    } else if (shape === "Bar"){
+    } else if (isBar){
       // Along-slit profile at cross-slit=0: perpendicular distance = |dy*cosA|
       spatialRaw[j] = Math.exp(-0.5*(dy*cosA/Math.max(0.01,srcRadius))**2);
     } else {
@@ -1821,8 +1823,7 @@ const IMG_FLAGS = {
   sky_kind:  "spectra_0.2A",             // key in SPECTRA_DATA.sky_lines
   smoothing: 0,                          // extra Gaussian smoothing applied to spectralProfile (pixels, 0 = off)
   user_throughput_key: "",              // key in SPECTRA_DATA.throughput_per_instrument for a user-loaded CSV ("" = none)
-  source_shape: "Gaussian",            // "Gaussian" | "Moffat" | "Disk" | "Bar"
-  bar_angle: 0                         // Bar orientation in degrees (0 = horizontal)
+  source_shape: "Gaussian"             // "Gaussian" | "Moffat" | "Disk" | "Bar 0°" | "Bar 45°" | "Bar 90°"
 };
 
 // Loaded from data/spectra.json at startup
@@ -2311,26 +2312,10 @@ function buildImageOptionsUI(){
 
   // Source shape (img + ifs tabs only)
   dropdown("Shape", "img-shape",
-    ["Gaussian","Moffat","Disk","Bar"],
+    ["Gaussian","Moffat","Disk","Bar 0°","Bar 45°","Bar 90°"],
     IMG_FLAGS.source_shape,
-    v => { IMG_FLAGS.source_shape = v; updateImgDependentUI(); scheduleUpdate(); },
-    "2D spatial shape of the source. Gaussian/Moffat/Disk use Size_source as the radius/sigma. Bar = infinite filament at a given angle — shows how a slit or slicer samples it.");
-
-  // Bar angle slider (shown only when shape=Bar)
-  {
-    const barRow = wrap.append("div").attr("id","bar-angle-row")
-      .style("display", IMG_FLAGS.source_shape==="Bar" ? "flex" : "none")
-      .style("align-items","center").style("gap","6px").style("font-size","11.5px").style("margin-bottom","4px");
-    barRow.append("span").style("color","var(--muted)").text("Bar angle (°)");
-    const barLabel = barRow.append("span").attr("id","bar-angle-label").style("min-width","32px").style("color","var(--text)").text(`${IMG_FLAGS.bar_angle}°`);
-    barRow.append("input").attr("type","range").attr("min",-90).attr("max",90).attr("step",1)
-      .attr("id","bar-angle-slider").style("width","90px").property("value", IMG_FLAGS.bar_angle)
-      .on("input", function(){
-        IMG_FLAGS.bar_angle = +this.value;
-        document.getElementById("bar-angle-label").textContent = `${IMG_FLAGS.bar_angle}°`;
-        scheduleUpdate();
-      });
-  }
+    v => { IMG_FLAGS.source_shape = v; scheduleUpdate(); },
+    "2D spatial shape of the source. Size_source = radius/sigma. Bar = infinite filament: 0°=perpendicular to slit, 45°=diagonal, 90°=parallel to slit.");
 
   // Spectrum
   const spectraNames = ["Baseline emission line"]
@@ -3061,7 +3046,6 @@ function drawImageView(){
   pa.atm_kind  = IMG_FLAGS.atm_kind;
   pa.sky_kind  = IMG_FLAGS.sky_kind;
   pa.source_shape = IMG_FLAGS.source_shape;
-  pa.bar_angle    = IMG_FLAGS.bar_angle;
   // Use SIMBAD redshift for SDSS-fetched spectra, fall back to slider value
   pa.Redshift = (STATE.fetchedSpectrum && IMG_FLAGS.spectrum === STATE.fetchedSpectrum.name)
     ? STATE.fetchedSpectrum.redshift
@@ -3671,8 +3655,10 @@ const IFS_STATE = {
    For separable shapes (Gaussian, Moffat) this reduces to the 1D PSF.
    For Disk and Bar it encodes the true 2D geometry. */
 function _ifsSpaxelPsf2D(pa, H, n3){
-  const shape     = pa.source_shape || "Gaussian";
-  const barAngle  = (pa.bar_angle || 0) * Math.PI / 180;
+  const shape    = pa.source_shape || "Gaussian";
+  const isBar    = shape.startsWith("Bar");
+  const barDeg   = isBar ? parseInt(shape.replace("Bar ","")) || 0 : 0;
+  const barAngle = barDeg * Math.PI / 180;
   const cosA = Math.cos(barAngle), sinA = Math.sin(barAngle);
   const Rx    = pa.PSF_RMS_det / Math.max(0.001, pa.Slitwidth);  // PSF sigma in spaxels
   const srcR  = Math.max(0.01, pa.Size_source) / Math.max(0.001, pa.Slitwidth); // source radius in spaxels
@@ -3693,7 +3679,7 @@ function _ifsSpaxelPsf2D(pa, H, n3){
         const moffatScale = srcR / Math.sqrt(Math.pow(2, 1/2.5) - 1);
         const r2 = (dx*dx + dy*dy) / Math.max(1e-6, moffatScale*moffatScale);
         val = Math.pow(1 + r2, -2.5);
-      } else if (shape === "Bar"){
+      } else if (isBar){
         // Bar oriented at barAngle: infinite along the bar axis, width=srcR perpendicular
         // d_perp = perpendicular distance to bar axis
         const d_perp = dx*sinA - dy*cosA;
@@ -3918,7 +3904,7 @@ function drawIfsView(){
   pa.atmlambda = IMG_FLAGS.atmlambda; pa.QElambda = IMG_FLAGS.QElambda;
   pa.sky_lines = IMG_FLAGS.sky_lines; pa.source_im = IMG_FLAGS.source_im;
   pa.spectrum = IMG_FLAGS.spectrum; pa.atm_kind = IMG_FLAGS.atm_kind; pa.sky_kind = IMG_FLAGS.sky_kind;
-  pa.source_shape = IMG_FLAGS.source_shape; pa.bar_angle = IMG_FLAGS.bar_angle;
+  pa.source_shape = IMG_FLAGS.source_shape;
   pa.Redshift = (STATE.fetchedSpectrum && IMG_FLAGS.spectrum === STATE.fetchedSpectrum.name)
     ? STATE.fetchedSpectrum.redshift
     : (STATE.values.Redshift || 0);
@@ -4298,8 +4284,6 @@ function updateImgDependentUI(){
     const inp = row.querySelector("input[type='range']");
     if (inp) inp.disabled = lock;
   }
-  const barRow = document.getElementById("bar-angle-row");
-  if (barRow) barRow.style.display = IMG_FLAGS.source_shape === "Bar" ? "flex" : "none";
 }
 
 function setView(view){
