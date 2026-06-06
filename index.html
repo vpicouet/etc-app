@@ -3786,7 +3786,6 @@ function buildIfsCubeSNR(sim, pa, n3, stack){
   const jSlitLo = Math.max(0, Math.floor(H/2 - slitLen_px/2));
   const jSlitHi = Math.min(H, Math.ceil(H/2 + slitLen_px/2));
 
-  const spat2D = _ifsSpaxelPsf2D(pa, H, n3);
   for (let j=0;j<H;j++){
     const inSlit = (j>=jSlitLo && j<jSlitHi);
     for (let k=0;k<n3;k++){
