@@ -1177,27 +1177,51 @@ function simulateImage(p){
   const barAngle  = ((p.bar_angle || 0) * Math.PI / 180);
   const srcRadius = Math.max(0.01, Size_source) / pixel_scale;  // in detector pixels
 
-  // Along-slit spatial profile (peak=1) — used for separable shapes
-  const spatialProfile = new Float64Array(H);
+  // Source radius in detector pixels (without PSF convolution — applied separately below)
   const cosA = Math.cos(barAngle), sinA = Math.sin(barAngle);
+
+  // Build raw spatial profile with srcRadius only, then convolve with PSF (Rx)
+  const spatialRaw = new Float64Array(H);
   for (let j=0;j<H;j++){
     const dy = j - H/2;
     if (shape === "Moffat"){
+      // β=2.5; scale factor so FWHM matches Gaussian at same srcRadius
+      // Gaussian FWHM = 2.35*srcRadius, Moffat FWHM = 2*srcRadius*sqrt(2^(1/β)-1)
+      // → moffat_scale = 1 / sqrt(2^(1/2.5)-1) ≈ 1.314 to get same FWHM
+      const moffatScale = srcRadius / Math.sqrt(Math.pow(2, 1/2.5) - 1);
       const beta = 2.5;
-      spatialProfile[j] = Math.pow(1 + (dy/Math.max(0.01,PSF_x))**2, -beta);
+      spatialRaw[j] = Math.pow(1 + (dy/Math.max(0.01,moffatScale))**2, -beta);
     } else if (shape === "Disk"){
-      spatialProfile[j] = Math.abs(dy) <= PSF_x ? 1.0 : 0.0;
+      spatialRaw[j] = Math.abs(dy) <= srcRadius ? 1.0 : 0.0;
     } else if (shape === "Bar"){
-      // Bar is infinite in the direction perpendicular to barAngle.
-      // Along-slit profile = cross-section through the bar at x=0 (slit center).
-      // Perpendicular distance from bar centre axis = |dy * cos(angle)|
-      const d = Math.abs(dy * cosA);
-      spatialProfile[j] = Math.exp(-0.5*(d/Math.max(0.01,PSF_x))**2);
+      // Along-slit profile at cross-slit=0: perpendicular distance = |dy*cosA|
+      spatialRaw[j] = Math.exp(-0.5*(dy*cosA/Math.max(0.01,srcRadius))**2);
     } else {
-      // Gaussian (default)
-      spatialProfile[j] = gauss1d(j, H/2, PSF_x);
+      // Gaussian
+      spatialRaw[j] = Math.exp(-0.5*(dy/Math.max(0.01,srcRadius))**2);
     }
   }
+
+  // Convolve spatialRaw with instrument PSF (Gaussian sigma=Rx) → spatialProfile
+  const spatialProfile = new Float64Array(H);
+  if (Rx < 0.3){
+    // PSF negligible — no convolution needed
+    for (let j=0;j<H;j++) spatialProfile[j] = spatialRaw[j];
+  } else {
+    const kRad = Math.max(2, Math.ceil(Rx * 4));
+    for (let j=0;j<H;j++){
+      let s = 0, wt = 0;
+      for (let d=-kRad; d<=kRad; d++){
+        const jj = j+d; if (jj<0||jj>=H) continue;
+        const w = Math.exp(-0.5*(d/Rx)**2);
+        s += spatialRaw[jj]*w; wt += w;
+      }
+      spatialProfile[j] = wt>0 ? s/wt : 0;
+    }
+  }
+  // Normalise peak to 1
+  let spPeak = 0; for (let j=0;j<H;j++) if (spatialProfile[j]>spPeak) spPeak=spatialProfile[j];
+  if (spPeak>0) for (let j=0;j<H;j++) spatialProfile[j] /= spPeak;
 
   // Slit profile (only for spectro): erf gate, peak=1
   const slitProfile = new Float64Array(H);
@@ -1309,46 +1333,22 @@ function simulateImage(p){
   } else {
     // ---- Standard separable / 2D shape path --------------------------------
     const psf_spec_narrow_sigma = Math.max(0.5, PSF_lambda_pix * PSF_lambda_pix / Math.max(0.01, PSF_lam*PSF_lam + PSF_lambda_pix*PSF_lambda_pix));
-    const psf_spat_narrow_sigma = Math.max(0.5, Rx * Rx / Math.max(0.01, PSF_x*PSF_x + Rx*Rx));
     let sumNarrowSpec = 0;
     for (let i=0;i<W;i++) sumNarrowSpec += gauss1d(i, W/2, psf_spec_narrow_sigma);
 
-    if (shape === "Bar"){
-      // Bar is NOT separable: each detector column (spectral position) corresponds to a
-      // different cross-slit position. The slit samples a 1D cut through the 2D bar at
-      // angle barAngle. Column i maps to cross-slit offset dx = (i - W/2) pixels.
-      // The bar profile at (dx, dy): perpendicular distance to bar axis =
-      //   d_perp = |dx*sinA - dy*cosA|   (across bar width, controlled by srcRadius)
-      //   d_par  = |dx*cosA + dy*sinA|   (along bar, infinite → always 1)
-      // So the spatial profile at column i is a Gaussian in dy centered where dy = dx*tanA.
-      let totalFlux = 0;
-      const raw2d = new Float64Array(H*W);
-      for (let i=0;i<W;i++){
-        const dx = i - W/2;
-        for (let j=0;j<H;j++){
-          const dy = j - H/2;
-          const d_perp = dx*sinA - dy*cosA;
-          raw2d[j*W+i] = Math.exp(-0.5*(d_perp/Math.max(0.01,srcRadius))**2);
-          totalFlux += raw2d[j*W+i];
-        }
-      }
-      const amp = Signal_el_total / Math.max(1, totalFlux);
-      for (let j=0;j<H;j++){
-        for (let i=0;i<W;i++){
-          source[j*W+i] = amp * raw2d[j*W+i] * slitProfile[j] * spectralProfile[i];
-        }
-      }
-    } else {
-      let sumNarrowSpat = 0;
-      for (let j=0;j<H;j++) sumNarrowSpat += gauss1d(j, H/2, psf_spat_narrow_sigma);
-      const normFactor = (sumNarrowSpec || 1) * (sumNarrowSpat || 1);
-      const amplitude = Signal_el_total / normFactor;
+    // All shapes are separable: spatialProfile already encodes the along-slit cut
+    // through the 2D source at the slit centre (including PSF convolution).
+    // Bar at angle θ: the slit (vertical) intersects the bar at y_cross=0.
+    // The along-slit profile is exp(-0.5*(dy*cosθ/r)²) — already in spatialProfile.
+    let sumNarrowSpat = 0;
+    for (let j=0;j<H;j++) sumNarrowSpat += spatialProfile[j];
+    const normFactor = (sumNarrowSpec || 1) * Math.max(1, sumNarrowSpat);
+    const amplitude = Signal_el_total / normFactor;
 
-      for (let j=0;j<H;j++){
-        const spat = amplitude * spatialProfile[j] * slitProfile[j];
-        for (let i=0;i<W;i++){
-          source[j*W + i] = spat * spectralProfile[i];
-        }
+    for (let j=0;j<H;j++){
+      const spat = amplitude * spatialProfile[j] * slitProfile[j];
+      for (let i=0;i<W;i++){
+        source[j*W + i] = spat * spectralProfile[i];
       }
     }
   }
