@@ -1039,7 +1039,7 @@ function simulateImage(p){
   // N images stacked
   const cosmic_ray_loss = Math.min(cosmic_ray_loss_per_sec*(exposure_time + readout_time/2), 1);
   const N_images = acquisition_time*3600/(exposure_time + readout_time);
-  const N_stack = Math.floor(N_images * (1-cosmic_ray_loss));
+  const N_stack = Math.max(1, Math.floor(N_images * (1-cosmic_ray_loss)));
 
   // λ-axis (Å)
   const wave_min = 10*wavelength - (W/2)*dispersion;
