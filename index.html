@@ -457,6 +457,12 @@
       <select id="xaxis" hidden></select>
     </div>
 
+    <div id="inst-warning" style="display:none;align-items:center;gap:6px;padding:4px 8px;background:var(--tab-active-bg);border:1px solid var(--accent);border-radius:4px;font-size:11.5px;margin-bottom:4px;flex-wrap:wrap">
+      <span id="inst-warning-text" style="flex:1;color:var(--text)"></span>
+      <button id="inst-keep-btn" style="padding:2px 8px;font-size:11px" title="Apply new instrument hardware params but keep your current source, strategy and observation parameters">Keep source &amp; strategy</button>
+      <button id="inst-full-btn" style="padding:2px 8px;font-size:11px" title="Reset everything to the new instrument's defaults">Apply all defaults</button>
+    </div>
+
     <details class="acc" id="img-opts-acc">
       <summary>Image options (Spectro image view)</summary>
       <div id="img-opts"></div>
@@ -1908,16 +1914,29 @@ async function loadInstruments(sheet_id, sheet_name){
   return STATE.instruments;
 }
 
-function applyInstrument(name){
+// Tabs whose params belong to the "source & strategy" group — preserved on "Keep" choice.
+const SOURCE_STRATEGY_TABS = new Set(["Source", "Strategy"]);
+
+function applyInstrument(name, keepSourceStrategy){
   const d = STATE.instruments.dict[name]; if (!d) return;
   STATE.current_instrument = name;
-  // Reset every param to its default first, then overlay sheet values.
-  // This mirrors Python where each Observation is constructed fresh — it prevents
-  // parameters absent from one instrument's sheet row from keeping a stale value
-  // set by the previously selected instrument.
-  initValuesToDefault();
-  for (const k of Object.keys(PARAMS)){
-    if (k in d && typeof d[k]==="number" && isFinite(d[k])) STATE.values[k] = d[k];
+  if (keepSourceStrategy){
+    // Save current Source+Strategy values before reset
+    const saved = {};
+    for (const [k,p] of Object.entries(PARAMS))
+      if (SOURCE_STRATEGY_TABS.has(p.tab)) saved[k] = STATE.values[k];
+    initValuesToDefault();
+    for (const k of Object.keys(PARAMS)){
+      if (k in d && typeof d[k]==="number" && isFinite(d[k])) STATE.values[k] = d[k];
+    }
+    // Restore Source+Strategy
+    for (const [k,v] of Object.entries(saved)) STATE.values[k] = v;
+  } else {
+    // Reset every param to its default first, then overlay sheet values.
+    initValuesToDefault();
+    for (const k of Object.keys(PARAMS)){
+      if (k in d && typeof d[k]==="number" && isFinite(d[k])) STATE.values[k] = d[k];
+    }
   }
   if ("IFS" in d) FLAGS.IFS = !!d.IFS;
   if (d.dimensions === 3) FLAGS.IFS = true;   // match Observation.py: dimensions=3 implies IFS=True
@@ -4364,8 +4383,30 @@ function buildInstrumentOptions(){
   const preferOrder = ["SCWI SPEC", "FIREBall-2 2025"];
   let pref = STATE.instruments.colnames[0];
   for (const p of preferOrder){ if (STATE.instruments.colnames.includes(p)){ pref = p; break; } }
-  sel.property("value", pref).on("change", function(){ applyInstrument(this.value); scheduleUpdate(); });
-  applyInstrument(pref);
+  sel.property("value", pref).on("change", function(){
+    const newName = this.value;
+    // First instrument load (no current instrument yet) → apply silently
+    if (!STATE.current_instrument){ applyInstrument(newName, false); scheduleUpdate(); return; }
+    // Show warning banner
+    const warn = document.getElementById("inst-warning");
+    document.getElementById("inst-warning-text").textContent =
+      `Switch to ${newName} — apply its default source & strategy values too?`;
+    warn.style.display = "flex";
+    const keepBtn = document.getElementById("inst-keep-btn");
+    const fullBtn = document.getElementById("inst-full-btn");
+    // Remove previous listeners to avoid stacking
+    const newKeep = keepBtn.cloneNode(true); keepBtn.parentNode.replaceChild(newKeep, keepBtn);
+    const newFull = fullBtn.cloneNode(true); fullBtn.parentNode.replaceChild(newFull, fullBtn);
+    document.getElementById("inst-keep-btn").addEventListener("click", function(){
+      warn.style.display = "none";
+      applyInstrument(newName, true); scheduleUpdate();
+    });
+    document.getElementById("inst-full-btn").addEventListener("click", function(){
+      warn.style.display = "none";
+      applyInstrument(newName, false); scheduleUpdate();
+    });
+  });
+  applyInstrument(pref, false);
 }
 
 async function loadSpectraData(){
