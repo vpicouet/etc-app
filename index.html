@@ -1229,24 +1229,32 @@ function simulateImage(p){
       const cz1  = cz0 + 1;
       const tz   = cz_f - cz0;
 
-      // Resample cube spatial column onto H detector rows (bilinear in y)
-      // Detector row j=0..H-1 maps to cube row centred on ny/2, step = cubePerDet
+      // Project cube onto detector row j:
+      // Python: cube_detector shape (Nx, Ny, Nλ) after transpose.
+      //   pre_im = mean(cube_detector[:, slit_lo:slit_hi, :], axis=1)  → shape (Nx, Nλ)
+      // So: detector row j ↔ cube X axis; slit cross-section ↔ cube Y axis (averaged).
+      // We average cube Y pixels within ±slitHalf of the cube centre.
+      const slitHalfCube = Math.max(0.5, (Slitwidth / pixel_scale) * cubePerDet / 2);
       const sliceH = new Float64Array(H);
       for (let j=0;j<H;j++){
-        const cubeY_f = ny/2 + (j - H/2) * cubePerDet;
-        const cy0 = Math.max(0, Math.min(ny-2, Math.floor(cubeY_f)));
-        const cy1 = cy0 + 1;
-        const ty  = cubeY_f - cy0;
-        // Sample at cube centre column (we project the cube onto the slit centre — nx mid)
-        const cx  = Math.floor(nx / 2);
-        // Trilinear interp (spectral × spatial; spatial x collapsed to slit centre)
-        const v00 = cubeData[cz0*ny*nx + cy0*nx + cx];
-        const v10 = cubeData[cz0*ny*nx + cy1*nx + cx];
-        const v01 = cubeData[cz1*ny*nx + cy0*nx + cx];
-        const v11 = cubeData[cz1*ny*nx + cy1*nx + cx];
-        sliceH[j] = Math.max(0,
-          (1-tz)*((1-ty)*v00 + ty*v10) +
-             tz *((1-ty)*v01 + ty*v11));
+        // detector row j → cube X index
+        const cubeX_f = nx/2 + (j - H/2) * cubePerDet;
+        const cx0 = Math.max(0, Math.min(nx-2, Math.floor(cubeX_f)));
+        const cx1 = cx0 + 1;
+        const tx  = cubeX_f - cx0;
+        // Average over cube Y pixels within slit width
+        const cyLo = Math.max(0, Math.floor(ny/2 - slitHalfCube));
+        const cyHi = Math.min(ny-1, Math.ceil(ny/2 + slitHalfCube));
+        let val = 0, cnt = 0;
+        for (let cy = cyLo; cy <= cyHi; cy++){
+          const v00 = cubeData[cz0*ny*nx + cy*nx + cx0];
+          const v10 = cubeData[cz0*ny*nx + cy*nx + cx1];
+          const v01 = cubeData[cz1*ny*nx + cy*nx + cx0];
+          const v11 = cubeData[cz1*ny*nx + cy*nx + cx1];
+          val += (1-tz)*((1-tx)*v00 + tx*v10) + tz*((1-tx)*v01 + tx*v11);
+          cnt++;
+        }
+        sliceH[j] = Math.max(0, cnt > 0 ? val / cnt : 0);
       }
 
       // Convolve spatially with PSF kernel
