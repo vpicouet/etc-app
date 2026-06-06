@@ -1338,13 +1338,13 @@ function simulateImage(p){
     let sumNarrowSpec = 0;
     for (let i=0;i<W;i++) sumNarrowSpec += gauss1d(i, W/2, psf_spec_narrow_sigma);
 
-    // All shapes are separable: spatialProfile already encodes the along-slit cut
-    // through the 2D source at the slit centre (including PSF convolution).
-    // Bar at angle θ: the slit (vertical) intersects the bar at y_cross=0.
-    // The along-slit profile is exp(-0.5*(dy*cosθ/r)²) — already in spatialProfile.
+    // Normalise by the PSF-only profile (not the full source+PSF profile) so that
+    // Signal_el_total maps to the correct total electron count on the detector.
+    // psf_spat_narrow_sigma is the PSF narrowed by the source size (same as before shapes).
+    const psf_spat_narrow_sigma = Math.max(0.5, Rx * Rx / Math.max(0.01, PSF_x*PSF_x + Rx*Rx));
     let sumNarrowSpat = 0;
-    for (let j=0;j<H;j++) sumNarrowSpat += spatialProfile[j];
-    const normFactor = (sumNarrowSpec || 1) * Math.max(1, sumNarrowSpat);
+    for (let j=0;j<H;j++) sumNarrowSpat += gauss1d(j, H/2, psf_spat_narrow_sigma);
+    const normFactor = (sumNarrowSpec || 1) * (sumNarrowSpat || 1);
     const amplitude = Signal_el_total / normFactor;
 
     for (let j=0;j<H;j++){
