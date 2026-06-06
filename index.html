@@ -3664,14 +3664,69 @@ const IFS_STATE = {
 };
 
 /* Shared helper: build the 1D spaxel-direction PSF (sum-normalised) used by all IFS cube builders. */
-function _ifsSpaxelPsf(pa, n3){
-  const sigma_x_spx = Math.max(0.3, Math.sqrt(pa.Size_source**2 + pa.PSF_RMS_det**2) / Math.max(0.001, pa.Slitwidth));
-  const cx = n3 / 2;
-  const psf = new Float64Array(n3);
-  let s = 0;
-  for (let k=0;k<n3;k++){ const dx=(k-cx)/sigma_x_spx; psf[k]=Math.exp(-0.5*dx*dx); s+=psf[k]; }
-  if (s>0) for (let k=0;k<n3;k++) psf[k]/=s;
-  return psf;
+/* Build a 2D spatial profile [H * n3] for the IFS view.
+   Axes: j = along-slit (0..H), k = cross-slit spaxel (0..n3).
+   Each row j is sum-normalised so that Σ_k spat2D[j*n3+k] = 1 when the source
+   has flux at row j, preserving the total signal from sim.source[j,i].
+   For separable shapes (Gaussian, Moffat) this reduces to the 1D PSF.
+   For Disk and Bar it encodes the true 2D geometry. */
+function _ifsSpaxelPsf2D(pa, H, n3){
+  const shape     = pa.source_shape || "Gaussian";
+  const barAngle  = (pa.bar_angle || 0) * Math.PI / 180;
+  const cosA = Math.cos(barAngle), sinA = Math.sin(barAngle);
+  const Rx    = pa.PSF_RMS_det / Math.max(0.001, pa.Slitwidth);  // PSF sigma in spaxels
+  const srcR  = Math.max(0.01, pa.Size_source) / Math.max(0.001, pa.Slitwidth); // source radius in spaxels
+
+  const out = new Float64Array(H * n3);
+  const cx = n3 / 2, cy = H / 2;
+
+  for (let j=0;j<H;j++){
+    const dy = j - cy;
+    for (let k=0;k<n3;k++){
+      const dx = k - cx;
+      let val = 0;
+      if (shape === "Disk"){
+        // Top-hat disk convolved with Gaussian PSF (erf edges)
+        const r2 = dx*dx + dy*dy;
+        val = r2 <= srcR*srcR ? 1.0 : 0.0;
+      } else if (shape === "Moffat"){
+        const moffatScale = srcR / Math.sqrt(Math.pow(2, 1/2.5) - 1);
+        const r2 = (dx*dx + dy*dy) / Math.max(1e-6, moffatScale*moffatScale);
+        val = Math.pow(1 + r2, -2.5);
+      } else if (shape === "Bar"){
+        // Bar oriented at barAngle: infinite along the bar axis, width=srcR perpendicular
+        // d_perp = perpendicular distance to bar axis
+        const d_perp = dx*sinA - dy*cosA;
+        val = Math.exp(-0.5*(d_perp/Math.max(0.01,srcR))**2);
+      } else {
+        // Gaussian 2D (separable — same as old 1D PSF but 2D)
+        const r2 = (dx*dx + dy*dy) / Math.max(1e-6, srcR*srcR);
+        val = Math.exp(-0.5*r2);
+      }
+      out[j*n3+k] = val;
+    }
+    // Convolve row j along k with PSF (Gaussian sigma=Rx in spaxels)
+    if (Rx >= 0.3){
+      const row = out.subarray(j*n3, j*n3+n3);
+      const tmp = new Float64Array(n3);
+      const kr = Math.max(2, Math.ceil(Rx*4));
+      for (let k=0;k<n3;k++){
+        let s=0, wt=0;
+        for (let d=-kr;d<=kr;d++){
+          const kk=k+d; if(kk<0||kk>=n3) continue;
+          const w=Math.exp(-0.5*(d/Rx)**2);
+          s+=row[kk]*w; wt+=w;
+        }
+        tmp[k]=wt>0?s/wt:0;
+      }
+      for (let k=0;k<n3;k++) out[j*n3+k]=tmp[k];
+    }
+    // Sum-normalise this row
+    let s=0; for (let k=0;k<n3;k++) s+=out[j*n3+k];
+    if (s>0) for (let k=0;k<n3;k++) out[j*n3+k]/=s;
+    else out[j*n3 + Math.floor(cx)] = 1; // fallback: point at centre
+  }
+  return out;
 }
 
 /* Source mode: noiseless cube, no Poisson. convolved=false → raw source × spaxel PSF.
@@ -3679,13 +3734,13 @@ function _ifsSpaxelPsf(pa, n3){
 function buildIfsCubeSource(sim, pa, n3, convolved){
   const H=sim.H, W=sim.W;
   const cube = new Float64Array(H*W*n3);
-  const spatPsf1D = _ifsSpaxelPsf(pa, n3);
+  const spat2D = _ifsSpaxelPsf2D(pa, H, n3);
 
   // Fill noiseless signal
   for (let j=0;j<H;j++)
     for (let k=0;k<n3;k++)
       for (let i=0;i<W;i++)
-        cube[(j*W+i)*n3+k] = Math.max(0, sim.source[j*W+i]) * spatPsf1D[k];
+        cube[(j*W+i)*n3+k] = Math.max(0, sim.source[j*W+i]) * spat2D[j*n3+k];
 
   if (!convolved) return cube;
 
@@ -3719,7 +3774,7 @@ function buildIfsCubeSource(sim, pa, n3, convolved){
 function buildIfsCubeSNR(sim, pa, n3, stack){
   const H=sim.H, W=sim.W;
   const cube = new Float64Array(H*W*n3);
-  const spatPsf1D = _ifsSpaxelPsf(pa, n3);
+  const spat2D = _ifsSpaxelPsf2D(pa, H, n3);
   const skyRate  = sim.sky_e_per_pix_per_exp;
   const darkRate = sim.dark_per_pix_per_exp;
   const extraRate= sim.extra_per_pix_per_exp;
@@ -3731,10 +3786,11 @@ function buildIfsCubeSNR(sim, pa, n3, stack){
   const jSlitLo = Math.max(0, Math.floor(H/2 - slitLen_px/2));
   const jSlitHi = Math.min(H, Math.ceil(H/2 + slitLen_px/2));
 
+  const spat2D = _ifsSpaxelPsf2D(pa, H, n3);
   for (let j=0;j<H;j++){
     const inSlit = (j>=jSlitLo && j<jSlitHi);
     for (let k=0;k<n3;k++){
-      const sp = spatPsf1D[k];
+      const sp = spat2D[j*n3+k];
       for (let i=0;i<W;i++){
         const sig = Math.max(0, sim.source[j*W+i]) * sp;
         const bg  = (inSlit ? skyRate : 0) + darkRate + extraRate;
@@ -3771,17 +3827,8 @@ function buildIfsCubeFromModel(sim, pa, n3, seed, stack){
   const RN        = pa.RN;
   const Nst       = sim.N_stack;
 
-  // 1D spaxel-direction PSF (sum-normalised so Σ_k = 1)
-  const sigma_x_spx = Math.max(0.3, Math.sqrt(pa.Size_source*pa.Size_source + pa.PSF_RMS_det*pa.PSF_RMS_det) / Math.max(0.001, pa.Slitwidth));
-  const cx = n3 / 2;
-  const spatPsf1D = new Float64Array(n3);
-  let psfSum = 0;
-  for (let k=0;k<n3;k++){
-    const dx = (k - cx) / sigma_x_spx;
-    spatPsf1D[k] = Math.exp(-0.5*dx*dx);
-    psfSum += spatPsf1D[k];
-  }
-  if (psfSum > 0) for (let k=0;k<n3;k++) spatPsf1D[k] /= psfSum;
+  // 2D spaxel spatial profile (sum-normalised per row)
+  const spatPsf1D = _ifsSpaxelPsf2D(pa, H, n3);
 
   // Slit mask for sky gating
   const slitLen_px = pa.Slitlength / pa.pixel_scale;
@@ -3792,7 +3839,7 @@ function buildIfsCubeFromModel(sim, pa, n3, seed, stack){
   for (let j=0;j<H;j++){
     const inSlit = (j >= jSlitLo && j < jSlitHi);
     for (let k=0;k<n3;k++){
-      const sp = spatPsf1D[k];
+      const sp = spatPsf1D[j*n3+k];
       // Background per voxel per exposure (sky gated by slit; dark+extra everywhere)
       const bg = (inSlit ? skyRate : 0) + darkRate + extraRate;
       for (let i=0;i<W;i++){
