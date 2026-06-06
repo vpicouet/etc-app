@@ -279,37 +279,47 @@
 
   /* === Responsive: mobile === */
   @media (max-width: 820px){
-    html,body{overflow:hidden;height:100%;width:100%}
+    /* Scroll allowed — no overflow:hidden on body */
+    html,body{overflow-x:hidden;overflow-y:auto;height:auto}
 
-    /* Compact header */
+    /* Compact header: keep only h1 + GitHub + theme toggle */
     header nav a:not([href*="github"]){display:none}
     header h1{font-size:13px}
 
-    /* App: plot fills everything below header */
+    /* App: single column, natural height, no grid */
     .app{
-      display:block;
-      height:calc(100vh - 38px);
-      width:100%;padding:0;gap:0;
-      position:relative;
+      display:flex;flex-direction:column;
+      width:100%;height:auto;
+      padding:4px;gap:6px;
+      grid-template-columns:none;
     }
 
-    /* Plot takes full app area */
+    /* Plot: fixed height, taller in portrait, shorter in landscape */
     #plot-wrap{
-      position:absolute;inset:0;
-      border-radius:0;border:none;margin:0;padding:4px;
+      width:100%;
+      height:70vw;          /* portrait: ~70% of screen width ≈ good SNR plot height */
+      min-height:260px;
+      max-height:520px;
+      flex:none;
+      border-radius:var(--radius-sm);
+      padding:4px;
       display:flex;flex-direction:column;overflow:hidden;
+      position:relative;
     }
     .plot-area{flex:1 1 auto;min-height:0;overflow:hidden}
 
-    /* Controls: overlay on top of plot, hidden by default */
+    /* img-row subplots: taller on mobile so they're readable */
+    .img-row,.img-row-h{height:180px}
+
+    /* Controls: normal flow below plot, hidden behind overlay toggle */
     #controls{
-      position:absolute;inset:0;
-      border-radius:0;border:none;margin:0;padding:10px;
+      width:100%;height:auto;
+      position:fixed;inset:0;
+      padding:10px;padding-top:48px;
       overflow-y:auto;
       display:none;
       flex-direction:column;gap:6px;
       background:var(--panel);
-      opacity:0.96;
       z-index:50;
     }
     body[data-mob-params="1"] #controls{display:flex}
@@ -317,20 +327,25 @@
     /* Slider columns on phone */
     .slider-row{grid-template-columns:110px 1fr 68px}
 
-    /* Floating ⚙ button bottom-right */
+    /* Landscape: use more of the screen height for the plot */
+    @media (orientation:landscape){
+      #plot-wrap{height:55vh;max-height:none}
+    }
+
+    /* Floating ⚙ button — always visible bottom-right */
     #mob-params-btn{
       display:flex;
-      position:fixed;bottom:16px;right:16px;
-      width:44px;height:44px;
+      position:fixed;bottom:18px;right:18px;
+      width:48px;height:48px;
       border-radius:50%;
       background:var(--accent);
       color:#fff;
       border:none;
-      font-size:20px;
+      font-size:22px;
       align-items:center;justify-content:center;
       cursor:pointer;
-      z-index:100;
-      box-shadow:0 2px 8px rgba(0,0,0,0.4);
+      z-index:200;
+      box-shadow:0 3px 10px rgba(0,0,0,0.5);
     }
   }
 </style>
@@ -1155,9 +1170,34 @@ function simulateImage(p){
     }
   }
 
-  // Spatial profile — Gaussian, peak=1 (NOT sum=1, matches Python)
+  // 2D source shape — source2D[j*W_src + i] where W_src=W (spectral), j=spatial
+  // For separable shapes we just need the along-slit profile (spatialProfile[j]).
+  // For Bar we need 2D because along-slit profile depends on spectral column (slit position).
+  const shape     = (p.source_shape || "Gaussian");
+  const barAngle  = ((p.bar_angle || 0) * Math.PI / 180);
+  const srcRadius = Math.max(0.01, Size_source) / pixel_scale;  // in detector pixels
+
+  // Along-slit spatial profile (peak=1) — used for separable shapes
   const spatialProfile = new Float64Array(H);
-  for (let j=0;j<H;j++) spatialProfile[j] = gauss1d(j, H/2, PSF_x);
+  const cosA = Math.cos(barAngle), sinA = Math.sin(barAngle);
+  for (let j=0;j<H;j++){
+    const dy = j - H/2;
+    if (shape === "Moffat"){
+      const beta = 2.5;
+      spatialProfile[j] = Math.pow(1 + (dy/Math.max(0.01,PSF_x))**2, -beta);
+    } else if (shape === "Disk"){
+      spatialProfile[j] = Math.abs(dy) <= PSF_x ? 1.0 : 0.0;
+    } else if (shape === "Bar"){
+      // Bar is infinite in the direction perpendicular to barAngle.
+      // Along-slit profile = cross-section through the bar at x=0 (slit center).
+      // Perpendicular distance from bar centre axis = |dy * cos(angle)|
+      const d = Math.abs(dy * cosA);
+      spatialProfile[j] = Math.exp(-0.5*(d/Math.max(0.01,PSF_x))**2);
+    } else {
+      // Gaussian (default)
+      spatialProfile[j] = gauss1d(j, H/2, PSF_x);
+    }
+  }
 
   // Slit profile (only for spectro): erf gate, peak=1
   const slitProfile = new Float64Array(H);
@@ -1267,26 +1307,48 @@ function simulateImage(p){
     if (spMean>0) for (let i=0;i<W;i++) spectralProfile[i] /= spMean;
 
   } else {
-    // ---- Standard separable path (Gaussian / SED) -------------------------
-    // If cube was selected but not yet loaded, trigger async load and fall back to baseline
-    if (isCubeSpec && cubeKey && !cubeData){
-      loadCube(cubeKey).then(() => scheduleUpdate());
-      for (let i=0;i<W;i++) spectralProfile[i] = gauss1d(i, W/2, PSF_lam);
-    }
-
+    // ---- Standard separable / 2D shape path --------------------------------
     const psf_spec_narrow_sigma = Math.max(0.5, PSF_lambda_pix * PSF_lambda_pix / Math.max(0.01, PSF_lam*PSF_lam + PSF_lambda_pix*PSF_lambda_pix));
     const psf_spat_narrow_sigma = Math.max(0.5, Rx * Rx / Math.max(0.01, PSF_x*PSF_x + Rx*Rx));
     let sumNarrowSpec = 0;
     for (let i=0;i<W;i++) sumNarrowSpec += gauss1d(i, W/2, psf_spec_narrow_sigma);
-    let sumNarrowSpat = 0;
-    for (let j=0;j<H;j++) sumNarrowSpat += gauss1d(j, H/2, psf_spat_narrow_sigma);
-    const normFactor = (sumNarrowSpec || 1) * (sumNarrowSpat || 1);
-    const amplitude = Signal_el_total / normFactor;
 
-    for (let j=0;j<H;j++){
-      const spat = amplitude * spatialProfile[j] * slitProfile[j];
+    if (shape === "Bar"){
+      // Bar is NOT separable: each detector column (spectral position) corresponds to a
+      // different cross-slit position. The slit samples a 1D cut through the 2D bar at
+      // angle barAngle. Column i maps to cross-slit offset dx = (i - W/2) pixels.
+      // The bar profile at (dx, dy): perpendicular distance to bar axis =
+      //   d_perp = |dx*sinA - dy*cosA|   (across bar width, controlled by srcRadius)
+      //   d_par  = |dx*cosA + dy*sinA|   (along bar, infinite → always 1)
+      // So the spatial profile at column i is a Gaussian in dy centered where dy = dx*tanA.
+      let totalFlux = 0;
+      const raw2d = new Float64Array(H*W);
       for (let i=0;i<W;i++){
-        source[j*W + i] = spat * spectralProfile[i];
+        const dx = i - W/2;
+        for (let j=0;j<H;j++){
+          const dy = j - H/2;
+          const d_perp = dx*sinA - dy*cosA;
+          raw2d[j*W+i] = Math.exp(-0.5*(d_perp/Math.max(0.01,srcRadius))**2);
+          totalFlux += raw2d[j*W+i];
+        }
+      }
+      const amp = Signal_el_total / Math.max(1, totalFlux);
+      for (let j=0;j<H;j++){
+        for (let i=0;i<W;i++){
+          source[j*W+i] = amp * raw2d[j*W+i] * slitProfile[j] * spectralProfile[i];
+        }
+      }
+    } else {
+      let sumNarrowSpat = 0;
+      for (let j=0;j<H;j++) sumNarrowSpat += gauss1d(j, H/2, psf_spat_narrow_sigma);
+      const normFactor = (sumNarrowSpec || 1) * (sumNarrowSpat || 1);
+      const amplitude = Signal_el_total / normFactor;
+
+      for (let j=0;j<H;j++){
+        const spat = amplitude * spatialProfile[j] * slitProfile[j];
+        for (let i=0;i<W;i++){
+          source[j*W + i] = spat * spectralProfile[i];
+        }
       }
     }
   }
@@ -1758,7 +1820,9 @@ const IMG_FLAGS = {
   atm_kind:  "pwv_kpno (ground)",        // key in SPECTRA_DATA.atm (or "soft cosine fallback")
   sky_kind:  "spectra_0.2A",             // key in SPECTRA_DATA.sky_lines
   smoothing: 0,                          // extra Gaussian smoothing applied to spectralProfile (pixels, 0 = off)
-  user_throughput_key: ""               // key in SPECTRA_DATA.throughput_per_instrument for a user-loaded CSV ("" = none)
+  user_throughput_key: "",              // key in SPECTRA_DATA.throughput_per_instrument for a user-loaded CSV ("" = none)
+  source_shape: "Gaussian",            // "Gaussian" | "Moffat" | "Disk" | "Bar"
+  bar_angle: 0                         // Bar orientation in degrees (0 = horizontal)
 };
 
 // Loaded from data/spectra.json at startup
@@ -1766,7 +1830,7 @@ let SPECTRA_DATA = null;
 
 // ---- Emission datacube support ------------------------------------------------
 // Set to false to completely disable cube loading and hide cube options in the UI.
-const EMISSION_CUBES_ENABLED = true;
+const EMISSION_CUBES_ENABLED = false;
 
 let CUBE_INDEX = null;   // loaded from data/cubes/index.json  { key: {label, file, shape, wave_min, wave_max, …} }
 const CUBE_CACHE = {};   // key → Float32Array (lazy-loaded on first use)
@@ -2244,6 +2308,29 @@ function buildImageOptionsUI(){
     IMG_FLAGS.source_im,
     v => IMG_FLAGS.source_im = v,
     "What to render: noisy simulated detector image, the noiseless source, the convolved source, or a per-pixel SNR map.");
+
+  // Source shape (img + ifs tabs only)
+  dropdown("Shape", "img-shape",
+    ["Gaussian","Moffat","Disk","Bar"],
+    IMG_FLAGS.source_shape,
+    v => { IMG_FLAGS.source_shape = v; updateImgDependentUI(); scheduleUpdate(); },
+    "2D spatial shape of the source. Gaussian/Moffat/Disk use Size_source as the radius/sigma. Bar = infinite filament at a given angle — shows how a slit or slicer samples it.");
+
+  // Bar angle slider (shown only when shape=Bar)
+  {
+    const barRow = wrap.append("div").attr("id","bar-angle-row")
+      .style("display", IMG_FLAGS.source_shape==="Bar" ? "flex" : "none")
+      .style("align-items","center").style("gap","6px").style("font-size","11.5px").style("margin-bottom","4px");
+    barRow.append("span").style("color","var(--muted)").text("Bar angle (°)");
+    const barLabel = barRow.append("span").attr("id","bar-angle-label").style("min-width","32px").style("color","var(--text)").text(`${IMG_FLAGS.bar_angle}°`);
+    barRow.append("input").attr("type","range").attr("min",-90).attr("max",90).attr("step",1)
+      .attr("id","bar-angle-slider").style("width","90px").property("value", IMG_FLAGS.bar_angle)
+      .on("input", function(){
+        IMG_FLAGS.bar_angle = +this.value;
+        document.getElementById("bar-angle-label").textContent = `${IMG_FLAGS.bar_angle}°`;
+        scheduleUpdate();
+      });
+  }
 
   // Spectrum
   const spectraNames = ["Baseline emission line"]
@@ -2973,6 +3060,8 @@ function drawImageView(){
   pa.spectrum  = IMG_FLAGS.spectrum;
   pa.atm_kind  = IMG_FLAGS.atm_kind;
   pa.sky_kind  = IMG_FLAGS.sky_kind;
+  pa.source_shape = IMG_FLAGS.source_shape;
+  pa.bar_angle    = IMG_FLAGS.bar_angle;
   // Use SIMBAD redshift for SDSS-fetched spectra, fall back to slider value
   pa.Redshift = (STATE.fetchedSpectrum && IMG_FLAGS.spectrum === STATE.fetchedSpectrum.name)
     ? STATE.fetchedSpectrum.redshift
@@ -3783,6 +3872,7 @@ function drawIfsView(){
   pa.atmlambda = IMG_FLAGS.atmlambda; pa.QElambda = IMG_FLAGS.QElambda;
   pa.sky_lines = IMG_FLAGS.sky_lines; pa.source_im = IMG_FLAGS.source_im;
   pa.spectrum = IMG_FLAGS.spectrum; pa.atm_kind = IMG_FLAGS.atm_kind; pa.sky_kind = IMG_FLAGS.sky_kind;
+  pa.source_shape = IMG_FLAGS.source_shape; pa.bar_angle = IMG_FLAGS.bar_angle;
   pa.Redshift = (STATE.fetchedSpectrum && IMG_FLAGS.spectrum === STATE.fetchedSpectrum.name)
     ? STATE.fetchedSpectrum.redshift
     : (STATE.values.Redshift || 0);
@@ -4157,10 +4247,13 @@ function scheduleUpdate(){ if (updateScheduled) return; updateScheduled = true; 
 function updateImgDependentUI(){
   const lock = IMG_FLAGS.spectrum !== "Baseline emission line" && STATE.view !== "snr";
   const row = document.getElementById("row-Line_width");
-  if (!row) return;
-  row.classList.toggle("dep-locked", lock);
-  const inp = row.querySelector("input[type='range']");
-  if (inp) inp.disabled = lock;
+  if (row){
+    row.classList.toggle("dep-locked", lock);
+    const inp = row.querySelector("input[type='range']");
+    if (inp) inp.disabled = lock;
+  }
+  const barRow = document.getElementById("bar-angle-row");
+  if (barRow) barRow.style.display = IMG_FLAGS.source_shape === "Bar" ? "flex" : "none";
 }
 
 function setView(view){
