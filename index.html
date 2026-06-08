@@ -10,6 +10,8 @@
 <script src="data/spectra.js"></script>
 <!-- Emission cube index — sets window.CUBE_INDEX_BAKED. Also accessible via fetch("data/cubes/index.json"). -->
 <script src="data/cubes/index.js"></script>
+<!-- Baked instruments — sets window.INSTRUMENTS_BAKED. Fallback when Google Sheet is unreachable. -->
+<script src="data/instruments.js"></script>
 <style>
   /* ===== DESIGN TOKENS ============================================================
      All visible style is parameterised through CSS variables so that theme files in
@@ -1864,6 +1866,7 @@ const PARAM_TIPS = {
     "• sky_el = Sky × eff_area × slit_area × max(Δλ,disp) × t_exp\n" +
     "• Sky shot noise: σ_sky = √(sky_el · ENF)\n" +
     "• Sky area = min(σ_eff·2.35, Slitlength) × Slitwidth per pixel\n" +
+    "• Dominates SNR at long exposures (sky-limited regime)",
 
   Line_width:
     "Source spectral extent / emission line FWHM [Å]\n" +
@@ -1911,7 +1914,7 @@ const PARAM_TIPS = {
   Throughput:
     "Instrument optical throughput [0–1], excl. QE and Atm\n" +
     "• eff_area = QE · Throughput · Atm · A_tel\n" +
-    "• Scales signal (and signal shot noise) linearly\n" +
+    "• Scales signal (and signal shot noise) linearly\n",
 
   PSF_RMS_det:
     "PSF σ at detector [arcsec] — image quality after optics\n" +
@@ -2140,28 +2143,44 @@ function initValuesToDefault(){ for (const [k,p] of Object.entries(PARAMS)) STAT
    4. LOAD GSHEET
    ========================================================================== */
 async function loadInstruments(sheet_id, sheet_name){
-  const url = `https://docs.google.com/spreadsheets/d/${sheet_id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet_name)}`;
-  const r = await fetch(url, {mode:"cors"});
-  if (!r.ok) throw new Error(`HTTP ${r.status} loading gsheet`);
-  const txt = await r.text();
-  const rows = d3.csvParseRows(txt);
-  if (rows.length<2) throw new Error("Empty sheet");
-  const header = rows[0];
-  const instrNames = header.slice(3).filter(n=>n && n.trim().length);
-  const dict = {}; const char_units = {};
-  for (const n of instrNames) dict[n] = {};
-  for (let r=1;r<rows.length;r++){
-    const row = rows[r]; const key = row[1]; const unit = row[2];
-    if (!key) continue;
-    char_units[key] = unit||"";
-    for (let c=0;c<instrNames.length;c++){
-      const raw = row[3+c];
-      if (raw==null || raw==="") continue;
-      const f = parseFloat(raw);
-      dict[instrNames[c]][key] = isFinite(f) ? f : raw;
+  // Try live Google Sheet first; fall back to baked data/instruments.js on any failure.
+  let parsed = null;
+  try {
+    const url = `https://docs.google.com/spreadsheets/d/${sheet_id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet_name)}`;
+    const r = await fetch(url, {mode:"cors"});
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const txt = await r.text();
+    const rows = d3.csvParseRows(txt);
+    if (rows.length < 2) throw new Error("Empty sheet");
+    const header = rows[0];
+    const instrNames = header.slice(3).filter(n=>n && n.trim().length);
+    if (instrNames.length === 0) throw new Error("No instrument columns");
+    const dict = {}; const char_units = {};
+    for (const n of instrNames) dict[n] = {};
+    for (let i=1;i<rows.length;i++){
+      const row = rows[i]; const key = row[1]; const unit = row[2];
+      if (!key) continue;
+      char_units[key] = unit||"";
+      for (let c=0;c<instrNames.length;c++){
+        const raw = row[3+c];
+        if (raw==null || raw==="") continue;
+        const f = parseFloat(raw);
+        dict[instrNames[c]][key] = isFinite(f) ? f : raw;
+      }
+    }
+    parsed = {colnames: instrNames, char_units, dict};
+    d3.select("#status").classed("err",false).text(`Loaded ${instrNames.length} instruments (live).`);
+  } catch(e) {
+    // Live fetch failed — use baked fallback
+    if (window.INSTRUMENTS_BAKED) {
+      parsed = window.INSTRUMENTS_BAKED;
+      d3.select("#status").classed("err",false)
+        .text(`Loaded ${parsed.colnames.length} instruments (cached — sheet unreachable: ${e.message})`);
+    } else {
+      throw new Error(`Sheet unreachable (${e.message}) and no cached data found. Run scripts/bake_instruments.py.`);
     }
   }
-  STATE.instruments = {colnames: instrNames, char_units, dict};
+  STATE.instruments = parsed;
   return STATE.instruments;
 }
 
@@ -4842,7 +4861,7 @@ async function main(){
   try {
     await loadInstruments(document.getElementById("sheet_id").value, document.getElementById("sheet_name").value);
     buildInstrumentOptions();
-    d3.select("#status").classed("err",false).text(`Loaded ${STATE.instruments.colnames.length} instruments.`);
+    // Status message already set inside loadInstruments (live vs cached)
   } catch (e){
     d3.select("#status").classed("err",true).text("Failed to load sheet: "+e.message+" — using defaults.");
     console.error(e);
