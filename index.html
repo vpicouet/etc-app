@@ -1840,39 +1840,225 @@ function computeObservation(p){
 /* ============================================================================
    3. PARAMETERS — grouped into accordions (NO "Image" group)
    ========================================================================== */
+/* ============================================================================
+   PARAMETER TOOLTIPS — edit here to update all hover descriptions.
+   Each tip is shown on mouse-over of the slider label.
+   Format: concise bullet points mapping the param to its role in the SNR calc.
+   SNR = S·κ / (κ·√Σσ²)  where κ=√(N_pix·N_λ·N_stack), S=Signal_el·N_pix·N_stack
+   ============================================================================ */
+const PARAM_TIPS = {
+  Signal:
+    "Source surface brightness [erg/cm²/s/arcsec²/Å]\n" +
+    "• S_el = Flux × eff_area × slit_area × Δλ × t_exp\n" +
+    "• Signal shot noise: σ_sig = √(S_el · ENF)\n" +
+    "• Circular fiber (Slitwidth=Slitlength): flux × π/4",
+
+  Size_source:
+    "Source intrinsic σ [arcsec] (Gaussian/Moffat/Disk/Bar)\n" +
+    "• σ_eff = √(Size² + PSF_det²) = final image size on detector\n" +
+    "• source_size (spectro): N_spat = min(σ_eff·2.35, Slitlength)/pixel_scale\n" +
+    "• IFS n_slices (source) = √(σ_eff²+PSF_mask²)·2.35 / Slitwidth",
+
+  Sky:
+    "Sky surface brightness [erg/cm²/s/arcsec²/Å]\n" +
+    "• sky_el = Sky × eff_area × slit_area × max(Δλ,disp) × t_exp\n" +
+    "• Sky shot noise: σ_sky = √(sky_el · ENF)\n" +
+    "• Sky area = min(σ_eff·2.35, Slitlength) × Slitwidth per pixel\n" +
+
+  Line_width:
+    "Source spectral extent / emission line FWHM [Å]\n" +
+    "• Signal Δλ = min(Line_width, Bandwidth)\n" +
+    "• Spectral pixels: N_spec = √(PSF_λ² + (min(Line_width,BW)/disp)²)\n" +
+    "• Sky spectral extent: max(Line_width, dispersion) per pixel\n" +
+    "• Wider line → more signal but also more N_spec → noise grows",
+
+  Atmosphere:
+    "Atmospheric transmission [0–1]\n" +
+    "• eff_area = QE · Throughput · Atm · A_tel\n" +
+    "• Scales signal (and signal shot noise) linearly\n" +
+    "• Does not affect sky, dark, RN, or CIC noise terms",
+
+  acquisition_time:
+    "Total on-sky time [hours]\n" +
+    "• N_frames = t_acq·3600 / (t_exp + t_read)\n" +
+    "• N_stack = N_frames · (1 − cosmic_ray_loss_per_frame)\n" +
+    "• SNR ∝ √N_stack → scales as √t_acq at fixed t_exp",
+
+  wavelength:
+    "Observed wavelength [nm]\n" +
+    "• Photon energy E=hc/λ used in flux→electrons conversion\n" +
+    "• PSF_λ = 10·λ / (R · dispersion) pixels\n" +
+    "• Selects the atmospheric transmission and QE curves",
+
+  lambda_stack:
+    "Spectral bins stacked [pix] — imager mode only\n" +
+    "• SNR κ factor: κ = √(N_pix · lambda_stack · N_stack)\n" +
+    "• Forced to 1 for non-IFS spectrographs (spectral binning set by Line_width)\n" +
+    "• SNR ∝ √lambda_stack: signal ∝ N_λ, noise ∝ √N_λ",
+
+  Collecting_area:
+    "Telescope collecting area [m²]\n" +
+    "• eff_area = QE · Throughput · Atm · (A_tel · 10⁴ cm²/m²)\n" +
+    "• Signal ∝ A_tel; background-limited SNR ∝ √A_tel",
+
+  pixel_scale:
+    "Detector pixel scale [arcsec/pix]\n" +
+    "• N_spat = σ_eff·2.35 / pixel_scale (source spatial pixels)\n" +
+    "• Res elem spatial: spat_elem = PSF_mask·2.35 / pixel_scale\n" +
+    "• Imager sky per pix ∝ pixel_scale²; spectro sky ∝ pixel_scale\n" +
+    "• Smaller pixels → more N_pix → more read/dark noise accumulated",
+
+  Throughput:
+    "Instrument optical throughput [0–1], excl. QE and Atm\n" +
+    "• eff_area = QE · Throughput · Atm · A_tel\n" +
+    "• Scales signal (and signal shot noise) linearly\n" +
+
+  PSF_RMS_det:
+    "PSF σ at detector [arcsec] — image quality after optics\n" +
+    "• σ_eff = √(Size_source² + PSF_det²): final image size on detector\n" +
+    "• Res elem (imager): N_pix = (PSF_det·2.35/pixel_scale)²\n" +
+    "• Spectral res elem: spec_elem uses min(PSF_det/pixel_scale, PSF_λ)\n" +
+    "• Larger PSF_det → larger σ_eff → more N_pix → more noise",
+
+  PSF_RMS_mask:
+    "PSF σ at slit/mask plane [arcsec]\n" +
+    "• Aperture loss along-slit: erf(Slitlength / √2·PSF_mask) — always\n" +
+    "• Aperture loss cross-slit: erf(Slitwidth / √2·PSF_mask) — non-IFS only\n" +
+    "• Spatial res elem (spectro): spat_elem = PSF_mask·2.35 / pixel_scale\n" +
+    "• IFS res elem n_slices = PSF_mask·2.35 / Slitwidth",
+
+  Throughput_FWHM:
+    "Filter bandpass FWHM [Å] — imager mode only\n" +
+    "• flux_conv = pixel_scale² · Throughput_FWHM\n" +
+    "• Wider bandpass → more sky and signal photons per pixel\n" +
+    "• Overridden by a λ-dependent throughput curve if available",
+
+  Spectral_resolution:
+    "Resolving power R = λ/Δλ, acts as the spectal point spread function\n" +
+    "• PSF_λ = 10·λ(nm) / (R · dispersion) pixels\n" +
+    "• Spectral res elem: spec_elem = √(PSF_λ² + (Line_width/disp)²)\n" +
+    "• Higher R → narrower PSF_λ → fewer spectral pixels → less noise (only down to 1 pixel)",
+
+  Slitwidth:
+    "Slit / slicer / fiber width [arcsec]\n" +
+    "• Aperture loss cross-slit: erf(Slitwidth / √2·PSF_mask) — non-IFS only\n" +
+    "• Sky solid angle per pixel ∝ Slitwidth (spectro)\n" +
+    "• IFS: n_slices = source_FWHM / Slitwidth (sets N_pix)\n" +
+    "• Slitwidth = Slitlength → circular fiber (flux × π/4)",
+
+  Slitlength:
+    "Slit / slicer / fiber length [arcsec]\n" +
+    "• Aperture loss along-slit: erf(Slitlength / √2·PSF_mask) — always\n" +
+    "• Caps spatial integration: N_spat = min(σ_eff·2.35, Slitlength)/pixel_scale\n" +
+    "• When Slitlength = Slitwidth → circular fiber",
+
+  dispersion:
+    "Spectral dispersion [Å/pix]\n" +
+    "• PSF_λ = 10·λ / (R · dispersion) pixels\n" +
+    "• N_spec = √(PSF_λ² + (min(Line_width,BW)/disp)²)\n" +
+    "• Sky per pixel ∝ max(Line_width, dispersion): more Å → more sky\n" +
+    "• Smaller dispersion → more pixels per line → more noise",
+
+  Bandwidth:
+    "Total spectrograph bandpass [Å]\n" +
+    "• Signal Δλ = min(Line_width, Bandwidth)\n" +
+    "• N_spec spectral pixels: min(Line_width, Bandwidth)/dispersion\n" +
+    "• Sets the spectral axis range displayed in plots",
+
+  readout_time:
+    "Readout dead-time between exposures [s]\n" +
+    "• N_frames = t_acq·3600 / (t_exp + t_read)\n" +
+    "• High t_read → fewer frames → SNR ∝ √N_frames decreases\n" +
+    "• cosmic_ray_loss ∝ (t_exp + t_read/2)\n" +
+    "• Set 0 for MCPs or rolling-shutter detectors",
+
+  exposure_time:
+    "Individual frame exposure time [s]\n" +
+    "• Signal, sky, dark all ∝ t_exp per frame\n" +
+    "• N_frames = t_acq / (t_exp + t_read): longer → fewer frames\n" +
+    "• Optimal t_exp: signal/dark·sky ratio vs. readout overhead\n" +
+    "• Cosmic-ray loss ∝ t_exp → very long frames lose more pixels",
+
+  QE:
+    "Detector quantum efficiency [0–1]\n" +
+    "• eff_area = QE · Throughput · Atm · A_tel\n" +
+    "• Scales signal, sky electrons linearly\n" +
+    "• Does not affect read noise, dark, or CIC",
+
+  RN:
+    "Read noise [e⁻/pix/frame] (raw, before EM gain)\n" +
+    "• RN_eff = RN / EM_gain after gain division\n" +
+    "• σ_RN² per pixel per frame — does not improve with N_stack\n" +
+    "• Thresholding mode: detection threshold = 5.5 · RN (raw)\n" +
+    "• Dominates at short t_exp (read-noise limited)",
+
+  Dark_current:
+    "Thermal dark current [e⁻/pix/h]\n" +
+    "• dark_el = Dark · t_exp / 3600 per frame\n" +
+    "• σ_dark = √(dark_el · ENF); ENF=√2 for EMCCD without thresholding\n" +
+    "• Dominates at long t_exp; reduced by cooling",
+
+  extra_background:
+    "Instrumental straylight / scattered light [e⁻/pix/h]\n" +
+    "• extra_el = extra_bg · t_exp / 3600 per frame\n" +
+    "• σ_extra = √(extra_el · ENF)\n" +
+    "• Independent noise term, treated like dark current",
+
+  cosmic_ray_loss_per_sec:
+    "Fraction of pixels lost per second to cosmic rays\n" +
+    "• loss_per_frame = rate · (t_exp + t_read/2)\n" +
+    "• N_stack = N_frames · (1 − loss_per_frame)\n" +
+    "• SNR peaks then falls at long t_exp for high cosmic-ray rates\n" +
+    "• Typical space values: 0.0001 (LEO) to 0.005 /s (balloon)",
+
+  EM_gain:
+    "EMCCD amplification gain [e⁻/e⁻]\n" +
+    "• RN_eff = RN / EM_gain → reduces/suppresses read noise contribution\n" +
+    "• ENF = √2: all Poisson noise variances × 2 when gain > 1\n" +
+    "• Thresholding mode removes ENF; threshold = 5.5 · RN (raw)\n" +
+    "• Set 1 for CCD / CMOS / MCP detectors",
+
+  CIC_charge:
+    "Clock-induced charges [e⁻/pix/frame]\n" +
+    "• σ_CIC = √(CIC · ENF) per pixel per frame\n" +
+    "• ENF=√2 applies for EMCCD without thresholding\n" +
+    "• Fixed per frame, independent of t_exp\n" +
+    "• Dominant EMCCD noise at very low flux (photon-starved regime)",
+};
+
 const PARAMS = {
-  Signal:       {tab:"Source Parameters", label:"Flux", unit:"erg/cm²/s/arcsec²/Å", min:-21, max:-9, step:0.1, log:true, default_log:-17, fmt:e=>e.toExponential(2), xable:true, tip:"Surface brightness of the diffuse source in erg/cm²/s/arcsec²/Å. Values >1 are interpreted as UV magnitudes and converted to flux."},
-  Size_source:  {tab:"Source Parameters", label:"Spatial ext. (σ)", unit:"\"", min:0, max:100, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial extension of the source (sigma) in arcseconds. Affects the number of pixels integrated over and aperture losses."},
-  Sky:          {tab:"Source Parameters", label:"Sky brightness", unit:"erg/cm²/s/arcsec²/Å", min:-23, max:-15, step:0.1, log:true, default_log:-18, fmt:e=>e.toExponential(2), xable:true, tip:"Sky background illumination (zodiacal + galactic) in erg/cm²/s/arcsec²/Å."},
-  Line_width:   {tab:"Source Parameters", label:"Line eq. width", unit:"Å", min:0.01, max:100, step:0.1, log:false, default:6, fmt:v=>v.toFixed(2), xable:true, tip:"Spectral extension of the source / emission line in Å. Used to compute the spectral integration."},
+  Signal:       {tab:"Source Parameters", label:"Flux", unit:"erg/cm²/s/arcsec²/Å", min:-21, max:-9, step:0.1, log:true, default_log:-17, fmt:e=>e.toExponential(2), xable:true, tip:PARAM_TIPS.Signal},
+  Size_source:  {tab:"Source Parameters", label:"Spatial ext. (σ)", unit:"\"", min:0, max:100, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.Size_source},
+  Sky:          {tab:"Source Parameters", label:"Sky brightness", unit:"erg/cm²/s/arcsec²/Å", min:-23, max:-15, step:0.1, log:true, default_log:-18, fmt:e=>e.toExponential(2), xable:true, tip:PARAM_TIPS.Sky},
+  Line_width:   {tab:"Source Parameters", label:"Line eq. width", unit:"Å", min:0.01, max:100, step:0.1, log:false, default:6, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.Line_width},
 
-  Atmosphere:        {tab:"Observing Strategy", label:"Atmosph. trans.", unit:"%", pct:true, min:0.1, max:1, step:0.01, log:false, default:1, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Atmospheric transmission (0–100 %). Affects signal but not detector noise."},
-  acquisition_time:  {tab:"Observing Strategy", label:"Acquisition time", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Total acquisition time [hours]. Divided by (exposure + readout) gives the number of frames."},
-  wavelength:        {tab:"Observing Strategy", label:"Observed λ", unit:"nm", min:50, max:1000, step:0.1, log:false, default:200, fmt:v=>v.toFixed(1), xable:true, tip:"Observed wavelength in nm. Used for flux/photon conversion (drives the photon energy)."},
-  lambda_stack:      {tab:"Observing Strategy", label:"λ Stack", unit:"pix", min:1, max:200, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true, tip:"Number of spectral slices stacked (only used in imager mode). Forced to 1 for spectrographs."},
+  Atmosphere:        {tab:"Observing Strategy", label:"Atmosph. trans.", unit:"%", pct:true, min:0.1, max:1, step:0.01, log:false, default:1, fmt:v=>(v*100).toFixed(0), xable:true, tip:PARAM_TIPS.Atmosphere},
+  acquisition_time:  {tab:"Observing Strategy", label:"Acquisition time", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.acquisition_time},
+  wavelength:        {tab:"Observing Strategy", label:"Observed λ", unit:"nm", min:50, max:1000, step:0.1, log:false, default:200, fmt:v=>v.toFixed(1), xable:true, tip:PARAM_TIPS.wavelength},
+  lambda_stack:      {tab:"Observing Strategy", label:"λ Stack", unit:"pix", min:1, max:200, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true, tip:PARAM_TIPS.lambda_stack},
 
-  Collecting_area: {tab:"Instrument", label:"Collect. area", unit:"m²", min:-2, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:"Physical collecting area of the instrument in m²."},
-  pixel_scale:     {tab:"Instrument", label:"Pixel scale", unit:"\"/pix", min:0.01, max:5, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Pixel plate scale in arcseconds per pixel."},
-  Throughput:      {tab:"Instrument", label:"Throughput", unit:"%", pct:true, min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Instrument throughput at the effective wavelength, excluding QE and atmosphere (0–100 %)."},
-  PSF_RMS_det:     {tab:"Instrument", label:"PSF at detector (σ)", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:"Spatial PSF RMS (sigma) at the detector, in arcseconds. Drives the resolution element size."},
-  PSF_RMS_mask: { tab: "Instrument", label: "PSF at mask/slice (σ)", unit: "\"", min: 0.01, max: 6, step: 0.01, log: false, default: 1, fmt: v => v.toFixed(2), xable: true, tip: "Spatial PSF RMS (sigma) at the slit/mask, in arcseconds. Multiply by 2.35 to get the FWHM. Drives slit losses." },
-  Throughput_FWHM: {tab:"Instrument", label:"TH FWHM (imager)", unit:"Å", min:1, max:5, step:0.01, log:true, default_log:2, fmt:v=>v.toFixed(2), xable:false, tip:"Instrument throughput FWHM in Å (imager mode only). If a per-instrument λ-dependent throughput exists, it is used instead."},
+  Collecting_area: {tab:"Instrument", label:"Collect. area", unit:"m²", min:-2, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.Collecting_area},
+  pixel_scale:     {tab:"Instrument", label:"Pixel scale", unit:"\"/pix", min:0.01, max:5, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.pixel_scale},
+  Throughput:      {tab:"Instrument", label:"Throughput", unit:"%", pct:true, min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>(v*100).toFixed(0), xable:true, tip:PARAM_TIPS.Throughput},
+  PSF_RMS_det:     {tab:"Instrument", label:"PSF at detector (σ)", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.PSF_RMS_det},
+  PSF_RMS_mask:    {tab:"Instrument", label:"PSF at mask/slice (σ)", unit:"\"", min:0.01, max:6, step:0.01, log:false, default:1, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.PSF_RMS_mask},
+  Throughput_FWHM: {tab:"Instrument", label:"TH FWHM (imager)", unit:"Å", min:1, max:5, step:0.01, log:true, default_log:2, fmt:v=>v.toFixed(2), xable:false, tip:PARAM_TIPS.Throughput_FWHM},
 
-  Spectral_resolution: {tab:"Spectrograph", label:"R = λ/Δλ (FWHM)", unit:"", min:90, max:10000, step:1, log:false, default:1000, fmt:v=>v.toFixed(0), xable:true, tip:"Spectral resolution R = λ/Δλ."},
-  Slitwidth:           {tab:"Spectrograph", label:"Slit width", unit:"\"", min:-3, max:2.78, step:0.01, log:true, default_log:0, fmt:v=>v.toFixed(3), xable:true, tip:"Width of the slit / slicer / fiber in arcseconds. Same value as length for a circular fiber."},
-  Slitlength:          {tab:"Spectrograph", label:"Slit length", unit:"\"", min:-3, max:2.78, step:0.01, log:true, default_log:0, fmt:v=>v.toFixed(3), xable:true, tip:"Length of the slit / slicer / fiber in arcseconds. Same value as width for a circular fiber."},
-  dispersion:          {tab:"Spectrograph", label:"Dispersion", unit:"Å/pix", min:0.01, max:5, step:0.001, log:false, default:0.5, fmt:v=>v.toFixed(3), xable:true, tip:"Dispersion at the detector in Å per pixel."},
-  Bandwidth:           {tab:"Spectrograph", label:"Bandwidth", unit:"Å", min:1, max:5000, step:1, log:false, default:200, fmt:v=>v.toFixed(0), xable:true, tip:"Total spectrograph bandwidth in Å."},
+  Spectral_resolution: {tab:"Spectrograph", label:"R = λ/Δλ (FWHM)", unit:"", min:90, max:10000, step:1, log:false, default:1000, fmt:v=>v.toFixed(0), xable:true, tip:PARAM_TIPS.Spectral_resolution},
+  Slitwidth:           {tab:"Spectrograph", label:"Slit width", unit:"\"", min:-3, max:2.78, step:0.01, log:true, default_log:0, fmt:v=>v.toFixed(3), xable:true, tip:PARAM_TIPS.Slitwidth},
+  Slitlength:          {tab:"Spectrograph", label:"Slit length", unit:"\"", min:-3, max:2.78, step:0.01, log:true, default_log:0, fmt:v=>v.toFixed(3), xable:true, tip:PARAM_TIPS.Slitlength},
+  dispersion:          {tab:"Spectrograph", label:"Dispersion", unit:"Å/pix", min:0.01, max:5, step:0.001, log:false, default:0.5, fmt:v=>v.toFixed(3), xable:true, tip:PARAM_TIPS.dispersion},
+  Bandwidth:           {tab:"Spectrograph", label:"Bandwidth", unit:"Å", min:1, max:5000, step:1, log:false, default:200, fmt:v=>v.toFixed(0), xable:true, tip:PARAM_TIPS.Bandwidth},
 
-  readout_time: { tab: "Detector", label: "Readout time", unit: "s", min: 0, max: 300, step: 1, log: false, default: 0, fmt: v => v.toFixed(0), xable: true, tip: "Detector readout time between exposures [seconds]. Use 0 for MCPs or rolling shutters." },
-  exposure_time: { tab: "Detector", label: "Exposure time", unit: "s", min: 1, max: 3005, step: 1, log: false, default: 50, fmt: v => v.toFixed(0), xable: true, tip: "Individual frame exposure time [seconds]." },
-  QE:                      {tab:"Detector", label:"Quantum eff.", unit:"%", pct:true, min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>(v*100).toFixed(0), xable:true, tip:"Detector quantum efficiency (0–100 %)."},
-  RN:                      {tab:"Detector", label:"Read noise", unit:"e-/pix", min:0.01, max:120, step:0.1, log:false, default:2, fmt:v=>v.toFixed(2), xable:true, tip:"Detector read noise in electrons/pixel/frame. For EMCCDs this is the raw RN before EM-gain division."},
-  Dark_current:            {tab:"Detector", label:"Dark current", unit:"e-/pix/h", min:0, max:50, step:0.001, log:false, default:0.1, fmt:v=>v.toFixed(3), xable:true, tip:"Detector dark current in electrons/pixel/hour."},
-  extra_background:        {tab:"Detector", label:"Extra background", unit:"e-/pix/h", min:0, max:200, step:0.1, log:false, default:0, fmt:v=>v.toFixed(2), xable:true, tip:"Additional background on the detector (straylight, leaks…) in electrons/pixel/hour."},
-  cosmic_ray_loss_per_sec: {tab:"Detector", label:"Cosmic ray loss", unit:"%/s", pct:true, min:0, max:0.1, step:0.0001, log:false, default:0, fmt:v=>(v*100).toFixed(2), xable:true, tip:"Fraction of pixels lost per second due to cosmic-ray impacts (0–100 %/s). E.g. 0.01 means a 1s frame loses 1% of pixels."},
-  EM_gain:                 {tab:"Detector", label:"EM gain", unit:"e-/e-", min:1, max:3500, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true, tip:"EMCCD amplification gain (e-/e-). Set to 1 for non-EMCCD detectors."},
-  CIC_charge:              {tab:"Detector", label:"CIC charge", unit:"e-/pix", min:0, max:0.07, step:0.001, log:false, default:0.001, fmt:v=>v.toFixed(4), xable:true, tip:"Clock-induced charges per pixel per frame (EMCCD spurious charges from the amplification register)."},
+  readout_time:            {tab:"Detector", label:"Readout time", unit:"s", min:0, max:300, step:1, log:false, default:0, fmt:v=>v.toFixed(0), xable:true, tip:PARAM_TIPS.readout_time},
+  exposure_time:           {tab:"Detector", label:"Exposure time", unit:"s", min:1, max:3005, step:1, log:false, default:50, fmt:v=>v.toFixed(0), xable:true, tip:PARAM_TIPS.exposure_time},
+  QE:                      {tab:"Detector", label:"Quantum eff.", unit:"%", pct:true, min:0.01, max:1, step:0.01, log:false, default:0.5, fmt:v=>(v*100).toFixed(0), xable:true, tip:PARAM_TIPS.QE},
+  RN:                      {tab:"Detector", label:"Read noise", unit:"e-/pix", min:0.01, max:120, step:0.1, log:false, default:2, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.RN},
+  Dark_current:            {tab:"Detector", label:"Dark current", unit:"e-/pix/h", min:0, max:50, step:0.001, log:false, default:0.1, fmt:v=>v.toFixed(3), xable:true, tip:PARAM_TIPS.Dark_current},
+  extra_background:        {tab:"Detector", label:"Extra background", unit:"e-/pix/h", min:0, max:200, step:0.1, log:false, default:0, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.extra_background},
+  cosmic_ray_loss_per_sec: {tab:"Detector", label:"Cosmic ray loss", unit:"%/s", pct:true, min:0, max:0.1, step:0.0001, log:false, default:0, fmt:v=>(v*100).toFixed(2), xable:true, tip:PARAM_TIPS.cosmic_ray_loss_per_sec},
+  EM_gain:                 {tab:"Detector", label:"EM gain", unit:"e-/e-", min:1, max:3500, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true, tip:PARAM_TIPS.EM_gain},
+  CIC_charge:              {tab:"Detector", label:"CIC charge", unit:"e-/pix", min:0, max:0.07, step:0.001, log:false, default:0.001, fmt:v=>v.toFixed(4), xable:true, tip:PARAM_TIPS.CIC_charge},
 }; 
 const GROUPS = ["Source Parameters","Observing Strategy","Instrument","Spectrograph","Detector"];
 
