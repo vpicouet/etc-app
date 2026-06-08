@@ -451,6 +451,7 @@
         </select></label>
         <button id="cfg-save" title="Save current parameters to a JSON file">save</button>
         <button id="cfg-load" title="Load parameters from a previously saved JSON file">load</button>
+        <button id="fits-dl" title="Download simulated images as FITS files (single + stacked)" style="display:none">fits↓</button>
         <input type="file" id="cfg-file" accept=".json" style="display:none">
         <button id="reset" title="Reset all parameters to their default values (does not change the instrument).">↺</button>
       </div>
@@ -485,6 +486,55 @@
    ========================================================================== */
 const COLORS = ['#E24A33','#988ED5','#FBC15E','#348ABD','#8EBA42','#FFB5B8','#777777'];
 const NAMES  = ["Signal","Dark current","Sky","Read noise","CIC","Extra background"];
+
+// ---------------------------------------------------------------------------
+// Minimal FITS writer — 2D (naxis=2) or 3D (naxis=3), float32 big-endian
+// Returns a Uint8Array ready for download.
+function writeFITS(data, shape, header_kv){
+  // shape: [NAXIS1, NAXIS2] or [NAXIS1, NAXIS2, NAXIS3] — FITS axis order (fastest varying first)
+  const BLOCK = 2880, CARD = 80;
+  const cards = [];
+  const card = (k,v,c) => {
+    const vstr = (typeof v === "string") ? `'${v}'` : (typeof v === "boolean") ? (v?"T":"F") : String(v);
+    const base = `${k.padEnd(8)}= ${vstr}`;
+    const comment = c ? ` / ${c}` : "";
+    return (base + comment).padEnd(CARD).slice(0, CARD);
+  };
+  cards.push(card("SIMPLE", true, ""));
+  cards.push(card("BITPIX", -32, "IEEE single precision float"));
+  cards.push(card("NAXIS", shape.length, ""));
+  shape.forEach((n,i) => cards.push(card(`NAXIS${i+1}`, n, "")));
+  cards.push(card("EXTEND", true, ""));
+  if (header_kv) for (const [k,v,c] of header_kv) cards.push(card(k,v,c));
+  cards.push("END".padEnd(CARD));
+  // Pad to block boundary
+  while ((cards.length * CARD) % BLOCK !== 0) cards.push(" ".repeat(CARD));
+  const hdrBytes = new Uint8Array(cards.length * CARD);
+  cards.forEach((c,i) => {
+    for (let j=0;j<CARD;j++) hdrBytes[i*CARD+j] = c.charCodeAt(j) & 0xFF;
+  });
+  // Data: float32 big-endian
+  const nPix = shape.reduce((a,b)=>a*b, 1);
+  const dataBuf = new ArrayBuffer(nPix * 4);
+  const dv = new DataView(dataBuf);
+  for (let i=0;i<nPix;i++) dv.setFloat32(i*4, data[i], false); // big-endian
+  // Pad data to block boundary
+  const dataSize = Math.ceil(nPix*4 / BLOCK) * BLOCK;
+  const dataBytes = new Uint8Array(dataSize);
+  dataBytes.set(new Uint8Array(dataBuf));
+  // Combine
+  const out = new Uint8Array(hdrBytes.length + dataBytes.length);
+  out.set(hdrBytes, 0);
+  out.set(dataBytes, hdrBytes.length);
+  return out;
+}
+
+function downloadFITS(data, shape, header_kv, filename){
+  const bytes = writeFITS(data, shape, header_kv);
+  const blob = new Blob([bytes], {type:"application/octet-stream"});
+  const a = Object.assign(document.createElement("a"), {href: URL.createObjectURL(blob), download: filename});
+  a.click(); URL.revokeObjectURL(a.href);
+}
 
 function lin(n,a,b){const o=new Array(n);const d=(b-a)/(n-1);for(let i=0;i<n;i++)o[i]=a+d*i;return o}
 function log(n,a,b){a=Math.max(a,1e-30);const la=Math.log10(a),lb=Math.log10(Math.max(b,a*1.0001));const o=new Array(n);const d=(lb-la)/(n-1);for(let i=0;i<n;i++)o[i]=10**(la+d*i);return o}
@@ -3117,6 +3167,7 @@ function drawImageView(){
   let sim;
   try { sim = simulateImage(pa); }
   catch(e){ d3.select("#status").classed("err",true).text("Image sim error: "+e.message); console.error(e); return; }
+  STATE.lastSim = sim; STATE.lastSimPa = pa;
 
   // Single + Stack canvases — auto-stretch via 1% / 99% percentiles
   const cvS = document.getElementById("cv-single");
@@ -4352,6 +4403,8 @@ function setView(view){
   document.getElementById("plot").classList.toggle("active", view==="snr");
   document.getElementById("plot-img").classList.toggle("active", view==="img");
   document.getElementById("plot-ifs").classList.toggle("active", view==="ifs");
+  const fitsDl = document.getElementById("fits-dl");
+  if (fitsDl) fitsDl.style.display = (view==="img" || view==="ifs") ? "" : "none";
   updateImgDependentUI();
   // Wait two RAFs so the just-shown container has time to lay out before we measure its size for the SVG viewBoxes
   requestAnimationFrame(()=> requestAnimationFrame(()=> scheduleUpdate()));
@@ -4747,6 +4800,49 @@ async function main(){
     this.value = "";  // allow reloading the same file
   });
   document.getElementById("reset").addEventListener("click", ()=>{ initValuesToDefault(); for (const k of Object.keys(PARAMS)) syncSlider(k); scheduleUpdate(); });
+  document.getElementById("fits-dl").addEventListener("click", ()=>{
+    const inst = (STATE.current_instrument || "etc").replace(/\s+/g,"-");
+    const date = new Date().toISOString().slice(0,10);
+    if (STATE.view === "img" && STATE.lastSim){
+      const sim = STATE.lastSim;
+      const pa  = STATE.lastSimPa || {};
+      const kv = [
+        ["INSTRUME", inst,              "Instrument"],
+        ["WAVELEN",  pa.wavelength||0,  "nm"],
+        ["CDELT1",   pa.dispersion||1,  "A/pix spectral"],
+        ["CDELT2",   pa.pixel_scale||1, "arcsec/pix spatial"],
+        ["BUNIT",    "e-",              "electrons"],
+      ];
+      // FITS NAXIS1=W (spectral), NAXIS2=H (spatial) — data stored row-major (j*W+i)
+      downloadFITS(sim.single, [sim.W, sim.H], kv, `${inst}-single-${date}.fits`);
+      downloadFITS(sim.stack,  [sim.W, sim.H], kv, `${inst}-stack-${date}.fits`);
+    } else if (STATE.view === "ifs" && IFS_STATE.cube){
+      const H  = IFS_STATE.H,  W  = IFS_STATE.W,  n3 = IFS_STATE.n3;
+      const pa = STATE.lastSimPa || {};
+      const kv = [
+        ["INSTRUME", inst,              "Instrument"],
+        ["WAVELEN",  pa.wavelength||0,  "nm"],
+        ["CDELT1",   pa.pixel_scale||1, "arcsec/pix along-slit (NAXIS1=n3 slices)"],
+        ["CDELT2",   pa.Slitwidth||1,   "arcsec/slice (NAXIS2=H along-slit)"],
+        ["CDELT3",   pa.dispersion||1,  "A/pix spectral (NAXIS3=W)"],
+        ["BUNIT",    "e-",              "electrons"],
+      ];
+      // JS cube layout: cube[(j*W+i)*n3+k]  →  axes: j=H(along-slit), i=W(spectral), k=n3(slicer)
+      // FITS target: NAXIS1=n3(spatial X), NAXIS2=H(spatial Y), NAXIS3=W(spectral)
+      //   → DS9 shows 2D spatial (n3 × H) per wavelength plane, scroll W for spectrum
+      // Transposed flat order: for each spectral plane i, for each row j, for each slice k
+      const transposeIFS = src => {
+        const out = new Float32Array(n3 * H * W);
+        for (let i=0;i<W;i++)
+          for (let j=0;j<H;j++)
+            for (let k=0;k<n3;k++)
+              out[i*H*n3 + j*n3 + k] = src[(j*W+i)*n3+k];
+        return out;
+      };
+      downloadFITS(transposeIFS(IFS_STATE.cube),       [n3, H, W], kv, `${inst}-ifs-single-${date}.fits`);
+      downloadFITS(transposeIFS(IFS_STATE.cube_stack), [n3, H, W], kv, `${inst}-ifs-stack-${date}.fits`);
+    }
+  });
   document.getElementById("reload").addEventListener("click", async ()=>{
     try {
       await loadInstruments(document.getElementById("sheet_id").value, document.getElementById("sheet_name").value);
