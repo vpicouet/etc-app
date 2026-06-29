@@ -1,0 +1,88 @@
+name: SNR Regression
+
+on:
+  push:
+    paths:
+      - "index.html"
+      - "compute.js"
+      - "tests/snr_regression.js"
+  pull_request:
+    paths:
+      - "index.html"
+      - "compute.js"
+      - "tests/snr_regression.js"
+
+jobs:
+  snr-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Sync compute.js from index.html
+        run: node scripts/sync_compute.js
+
+      - name: Check compute.js is up to date
+        run: |
+          if ! git diff --quiet compute.js; then
+            echo "::warning::compute.js is out of sync with index.html — run: node scripts/sync_compute.js"
+          fi
+
+      - name: Run SNR regression test
+        id: snr_test
+        run: node tests/snr_regression.js
+        continue-on-error: true
+
+      - name: Upload regression result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snr-regression-result
+          path: tests/snr_regression_result.json
+
+      - name: Create GitHub issue on regression
+        if: steps.snr_test.outcome == 'failure'
+        uses: actions/github-script@v7
+        env:
+          RESULT_FILE: tests/snr_regression_result.json
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+        with:
+          script: |
+            const fs = require('fs');
+            const result = JSON.parse(fs.readFileSync(process.env.RESULT_FILE, 'utf8'));
+            const sha    = process.env.SHA.slice(0, 8);
+            const branch = process.env.BRANCH;
+            const lines = result.map(r => {
+              const icon = r.pass ? '✅' : '❌';
+              if (r.error) return `${icon} **${r.instrument}**: ERROR — ${r.error}`;
+              return `${icon} **${r.instrument}**: SNR_max=${r.snr_max} (expected ${r.expected}, ratio=${r.ratio})`;
+            });
+            const body = [
+              '## SNR Regression Detected',
+              '',
+              `Triggered by commit \`${sha}\` on branch \`${branch}\`.`,
+              '',
+              'One or more instruments changed SNR_max by more than 10%:',
+              '',
+              ...lines,
+              '',
+              '**Action required:** Check recent changes to `index.html` or `compute.js`.',
+              'If the change is intentional, update the baseline values in `tests/snr_regression.js`.',
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `SNR Regression detected on ${branch} (${sha})`,
+              body,
+              labels: ['regression'],
+            });
+
+      - name: Fail if regression detected
+        if: steps.snr_test.outcome == 'failure'
+        run: exit 1

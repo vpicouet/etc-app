@@ -1,0 +1,16 @@
+[
+  {
+    "instrument": "SCWI SPEC",
+    "snr_max": 0.364,
+    "expected": 0.364,
+    "ratio": 0.999,
+    "pass": true
+  },
+  {
+    "instrument": "SCWI qccd2",
+    "snr_max": 1.417,
+    "expected": 1.417,
+    "ratio": 1,
+    "pass": true
+  }
+]

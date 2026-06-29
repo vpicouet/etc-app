@@ -2142,46 +2142,85 @@ function initValuesToDefault(){ for (const [k,p] of Object.entries(PARAMS)) STAT
 /* ============================================================================
    4. LOAD GSHEET
    ========================================================================== */
+function parseInstrumentCSV(txt){
+  const rows = d3.csvParseRows(txt);
+  if (rows.length < 2) throw new Error("Empty sheet (fewer than 2 rows)");
+  const header = rows[0];
+  const instrNames = header.slice(3).filter(n=>n && n.trim().length);
+  if (instrNames.length === 0) throw new Error("No instrument columns found in row 0");
+  const dict = {}; const char_units = {};
+  for (const n of instrNames) dict[n] = {};
+  for (let i=1;i<rows.length;i++){
+    const row = rows[i]; const key = row[1]; const unit = row[2];
+    if (!key) continue;
+    char_units[key] = unit||"";
+    for (let c=0;c<instrNames.length;c++){
+      const raw = row[3+c];
+      if (raw==null || raw==="") continue;
+      const f = parseFloat(raw);
+      dict[instrNames[c]][key] = isFinite(f) ? f : raw;
+    }
+  }
+  return {colnames: instrNames, char_units, dict};
+}
+
 async function loadInstruments(sheet_id, sheet_name){
-  // Try live Google Sheet first; fall back to baked data/instruments.js on any failure.
-  let parsed = null;
+  const statusEl = d3.select("#status");
+  let sheetError = null;
+
+  // 1. Try live Google Sheet
   try {
     const url = `https://docs.google.com/spreadsheets/d/${sheet_id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheet_name)}`;
     const r = await fetch(url, {mode:"cors"});
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status} from Google Sheets`);
     const txt = await r.text();
-    const rows = d3.csvParseRows(txt);
-    if (rows.length < 2) throw new Error("Empty sheet");
-    const header = rows[0];
-    const instrNames = header.slice(3).filter(n=>n && n.trim().length);
-    if (instrNames.length === 0) throw new Error("No instrument columns");
-    const dict = {}; const char_units = {};
-    for (const n of instrNames) dict[n] = {};
-    for (let i=1;i<rows.length;i++){
-      const row = rows[i]; const key = row[1]; const unit = row[2];
-      if (!key) continue;
-      char_units[key] = unit||"";
-      for (let c=0;c<instrNames.length;c++){
-        const raw = row[3+c];
-        if (raw==null || raw==="") continue;
-        const f = parseFloat(raw);
-        dict[instrNames[c]][key] = isFinite(f) ? f : raw;
-      }
-    }
-    parsed = {colnames: instrNames, char_units, dict};
-    d3.select("#status").classed("err",false).text(`Loaded ${instrNames.length} instruments (live).`);
+    const parsed = parseInstrumentCSV(txt);
+    STATE.instruments = parsed;
+    statusEl.classed("err",false).text(`Loaded ${parsed.colnames.length} instruments (live).`);
+    return STATE.instruments;
   } catch(e) {
-    // Live fetch failed — use baked fallback
-    if (window.INSTRUMENTS_BAKED) {
-      parsed = window.INSTRUMENTS_BAKED;
-      d3.select("#status").classed("err",false)
-        .text(`Loaded ${parsed.colnames.length} instruments (cached — sheet unreachable: ${e.message})`);
-    } else {
-      throw new Error(`Sheet unreachable (${e.message}) and no cached data found. Run scripts/bake_instruments.py.`);
-    }
+    sheetError = e.message;
   }
-  STATE.instruments = parsed;
-  return STATE.instruments;
+
+  // 2. Fall back to baked cache
+  if (window.INSTRUMENTS_BAKED) {
+    STATE.instruments = window.INSTRUMENTS_BAKED;
+    statusEl.classed("err",false)
+      .text(`Loaded ${STATE.instruments.colnames.length} instruments (cached). Google Sheet unavailable: ${sheetError}`);
+    return STATE.instruments;
+  }
+
+  // 3. Both failed — show error and offer local CSV upload
+  statusEl.classed("err",true).html(
+    `Could not load instruments. Google Sheet failed: <b>${sheetError}</b>. ` +
+    `No cached data available either. ` +
+    `<label style="cursor:pointer;text-decoration:underline">Upload a local CSV<input type="file" id="instr-csv-upload" accept=".csv" style="display:none"></label> ` +
+    `(export the <a href="https://docs.google.com/spreadsheets/d/${sheet_id}" target="_blank">instrument spreadsheet</a> as CSV first).`
+  );
+
+  // Wait for the user to pick a file
+  return new Promise((resolve, reject) => {
+    const inp = document.getElementById("instr-csv-upload");
+    if (!inp) return reject(new Error("Upload input not found"));
+    inp.addEventListener("change", () => {
+      const file = inp.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        try {
+          const parsed = parseInstrumentCSV(ev.target.result);
+          STATE.instruments = parsed;
+          statusEl.classed("err",false)
+            .text(`Loaded ${parsed.colnames.length} instruments from local file "${file.name}". (Google Sheet was unavailable: ${sheetError})`);
+          resolve(STATE.instruments);
+        } catch(e2) {
+          statusEl.classed("err",true).text(`Failed to parse CSV: ${e2.message}`);
+          reject(e2);
+        }
+      };
+      reader.readAsText(file);
+    });
+  });
 }
 
 // Tabs whose params belong to the "source & strategy" group — preserved on "Keep" choice.
@@ -4889,6 +4928,7 @@ async function main(){
       xKey: STATE.xKey,
       xlog: document.getElementById("xlog").classList.contains("on"),
       ylog: document.getElementById("ylog").classList.contains("on"),
+      view: STATE.view,
       values: Object.assign({}, STATE.values),
       img_flags: Object.assign({}, IMG_FLAGS),
     };
@@ -4994,6 +5034,7 @@ async function main(){
           document.getElementById("xlog").classList.toggle("on", cfg.xlog);
         if (typeof cfg.ylog === "boolean")
           document.getElementById("ylog").classList.toggle("on", cfg.ylog);
+        if (cfg.view && ["snr","img","ifs"].includes(cfg.view)) setView(cfg.view);
         for (const k of Object.keys(PARAMS)) syncSlider(k);
         buildImageOptionsUI();
         scheduleUpdate();
