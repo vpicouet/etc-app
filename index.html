@@ -1503,7 +1503,8 @@ function simulateImage(p){
     // catalogue is shown — no silent instrument-specific override.
     let rawCurve = null;
     if (SPECTRA_DATA && SPECTRA_DATA.sky_lines && p.sky_kind && SPECTRA_DATA.sky_lines[p.sky_kind]){
-      rawCurve = interpCurve(SPECTRA_DATA.sky_lines[p.sky_kind], SPECTRA_DATA.sky_grid, wavelengths);
+      rawCurve = interpCurve(SPECTRA_DATA.sky_lines[p.sky_kind],
+        (SPECTRA_DATA.sky_grids && SPECTRA_DATA.sky_grids[p.sky_kind]) || SPECTRA_DATA.sky_grid, wavelengths);
     }
     if (rawCurve){
       // Convolve with the instrumental spectral resolution (same as Observation.py gaussian_filter1d)
@@ -2346,6 +2347,16 @@ function applyInstrument(name, keepSourceStrategy){
     IMG_FLAGS.sky_kind = "UV_atm_lines";
     const el = document.getElementById("img-sky-kind");
     if (el) el.value = "UV_atm_lines";
+  }
+  // Non-UV instruments: Gemini Mauna Kea NIR catalogue for λ ≥ 950 nm, UVES otherwise
+  else if (SPECTRA_DATA && SPECTRA_DATA.sky_lines){
+    const wl = (typeof d.wavelength === "number") ? d.wavelength : 0;
+    const kind = (wl >= 950 && SPECTRA_DATA.sky_lines["Gemini_MK_NIR"]) ? "Gemini_MK_NIR" : "spectra_0.2A";
+    if (SPECTRA_DATA.sky_lines[kind]){
+      IMG_FLAGS.sky_kind = kind;
+      const el = document.getElementById("img-sky-kind");
+      if (el) el.value = kind;
+    }
   }
 
   // Inject instrument-specific atm curve into the dropdown (or remove it if absent)

@@ -60,7 +60,7 @@ The **Image options** accordion controls the simulator only (no effect on the SN
 - **Display mode** — `Sim image` (noisy realisation), `Source` (noiseless target), `Convolved source`, `SNR` (per-pixel SNR map).
 - **Spectrum** — the source spectral shape: a Gaussian emission line (*Baseline emission line*) or one of ~99 baked SEDs (HST/FOS QSOs, COSMOS galaxies, Salvato QSO templates).
 - **Atm curve** — `pwv_kpno` (ground) or `transmission_ground`. If the curve is identically zero across the detector window (e.g. `pwv_kpno` in the deep UV) the app falls back to a flat atm so the source remains visible.
-- **Sky-line catalogue** — `spectra_0.2A` (Paranal-like) or `UV_atm_lines` for UV instruments.
+- **Sky-line catalogue** — `spectra_0.2A` (UVES, 0.3–1.1 µm), `Gemini_MK_NIR` (0.9–5.6 µm, default for NIR instruments) or `UV_atm_lines` for UV instruments.
 - **Throughput(λ) shaping**, **Atmospheric absorption**, **Sky emission lines** — three independent toggles to apply the curves above.
 - **Colormap picker** — six gradient strips (viridis / inferno / plasma / cividis / gray / hot). Click one to apply to all `imshow` canvases. The choice is persisted in `localStorage`.
 
@@ -332,7 +332,8 @@ All bundled curves originate from the [vpicouet/generic-etc/data/](https://githu
 
 | Key | Source | Notes |
 |---|---|---|
-| `spectra_0.2A` | [UVES sky-line atlas](https://www.eso.org/observing/dfo/quality/UVES/pipeline/sky_spectrum.html) | Visible + NIR; downsampled from 0.2 Å native. |
+| `spectra_0.2A` | [UVES sky-line atlas](https://www.eso.org/observing/dfo/quality/UVES/pipeline/sky_spectrum.html) | 300–1100 nm; downsampled from 0.2 Å native to 0.1 nm. |
+| `Gemini_MK_NIR` | [Gemini Mauna Kea sky background](https://www.gemini.edu/observing/telescopes-and-sites/sites) (zenith, PWV = 1.6 mm, airmass 1.0) | 0.9–5.6 µm (NIR/MIR OH, O2 and thermal emission); stored as the excess over the local continuum, binned to 0.2 nm. Default for instruments with λ ≥ 950 nm. Rebuild with `scripts/bake_nir_sky.py`. |
 | `UV_atm_lines` | Custom UV line list bundled in generic-etc | For UV instruments where UVES doesn't apply. |
 
 ### 9.3 Source SEDs (~99 templates) {#data-spectra}
