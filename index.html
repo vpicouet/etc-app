@@ -2117,7 +2117,7 @@ const PARAMS = {
 
   Atmosphere:        {tab:"Observing Strategy", label:"Atmosph. trans.", unit:"%", pct:true, min:0.1, max:1, step:0.01, log:false, default:1, fmt:v=>(v*100).toFixed(0), xable:true, tip:PARAM_TIPS.Atmosphere},
   acquisition_time:  {tab:"Observing Strategy", label:"Acquisition time", unit:"h", min:-1, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.acquisition_time},
-  wavelength:        {tab:"Observing Strategy", label:"Observed λ", unit:"nm", min:50, max:1000, step:0.1, log:false, default:200, fmt:v=>v.toFixed(1), xable:true, tip:PARAM_TIPS.wavelength},
+  wavelength:        {tab:"Observing Strategy", label:"Observed λ", unit:"nm", min:50, max:6000, step:0.1, log:false, default:200, fmt:v=>v.toFixed(1), xable:true, tip:PARAM_TIPS.wavelength},
   lambda_stack:      {tab:"Observing Strategy", label:"λ Stack", unit:"pix", min:1, max:200, step:1, log:false, default:1, fmt:v=>v.toFixed(0), xable:true, tip:PARAM_TIPS.lambda_stack},
 
   Collecting_area: {tab:"Instrument", label:"Collect. area", unit:"m²", min:-2, max:3, step:0.1, log:true, default_log:0, fmt:v=>v.toFixed(2), xable:true, tip:PARAM_TIPS.Collecting_area},
@@ -2320,6 +2320,8 @@ function applyInstrument(name, keepSourceStrategy){
     }
     // Restore Source+Strategy
     for (const [k,v] of Object.entries(saved)) STATE.values[k] = v;
+    // The observed wavelength is defined by the instrument band: always take it from the instrument.
+    if (typeof d.wavelength === "number" && isFinite(d.wavelength)) STATE.values.wavelength = d.wavelength;
   } else {
     // Reset every param to its default first, then overlay sheet values.
     initValuesToDefault();
