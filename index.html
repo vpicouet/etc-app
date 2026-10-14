@@ -195,16 +195,21 @@
   body[data-view="ifs"] .slider-row label:hover{color:var(--muted);text-decoration:none}
   .slider-row label:hover{color:var(--accent);text-decoration:underline}
   .slider-row label.is-x{color:var(--accent-2);font-weight:600}
-  /* Force native widgets (slider track) to follow the page mode, not the OS/Chrome dark theme.
-     In light mode the default (auto) slider colours are used: with a light accent colour Chrome
-     draws the unfilled track black when the OS is in dark mode. */
-  html{color-scheme:light}
-  html:has(body[data-mode="dark"]){color-scheme:dark}
-  .slider-row input[type="range"]{width:100%;accent-color:auto;
-    height:14px;background:transparent;color-scheme:light}
-  /* Dim sliders in dark mode (color-scheme:dark makes the native track grey instead of white) */
-  body[data-mode="dark"] .slider-row input[type="range"]{color-scheme:dark;accent-color:var(--accent);opacity:0.85}
-  body[data-mode="dark"] .slider-row input[type="range"]:hover{opacity:1}
+  /* Range sliders drawn explicitly (light track, light-blue fill, round white thumb) so that they look the
+     same whatever the OS / Chrome colour scheme; the fill % is set by paintRange() through --p. */
+  .slider-row input[type="range"]{width:100%;--p:50%;height:20px;background:transparent;margin:0;
+    -webkit-appearance:none;appearance:none;cursor:pointer;color-scheme:light}
+  .slider-row input[type="range"]::-webkit-slider-runnable-track{height:8px;border-radius:4px;
+    background:linear-gradient(to right,var(--accent) var(--p),var(--line) var(--p))}
+  .slider-row input[type="range"]::-moz-range-track{height:8px;border-radius:4px;
+    background:linear-gradient(to right,var(--accent) var(--p),var(--line) var(--p))}
+  .slider-row input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    margin-top:-6px;border-radius:50%;background:var(--panel);border:1px solid var(--line-strong);
+    box-shadow:0 1px 2px rgba(0,0,0,.25)}
+  .slider-row input[type="range"]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;
+    background:var(--panel);border:1px solid var(--line-strong);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+  body[data-mode="dark"] .slider-row input[type="range"]::-webkit-slider-thumb{background:var(--text-soft)}
+  body[data-mode="dark"] .slider-row input[type="range"]::-moz-range-thumb{background:var(--text-soft)}
   .slider-row .val{font-size:11px;text-align:right;color:var(--text);
     font-variant-numeric:tabular-nums;font-family:var(--font-mono)}
   .flags-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
@@ -2453,6 +2458,7 @@ function buildUI(){
       const inp = row.append("input").attr("type","range").attr("data-key",k)
         .attr("title", tipText)
         .attr("min", p.min).attr("max", p.max).attr("step", step).attr("value", sliderVal);
+      paintRange(inp.node());
       const val = row.append("div").attr("class","val").attr("data-val",k).text(p.fmt(v))
         .attr("title","Click to type a value")
         .style("cursor","text");
@@ -2509,12 +2515,19 @@ function buildUI(){
   });
 }
 
+function paintRange(el){
+  const mn = parseFloat(el.min), mx = parseFloat(el.max), v = parseFloat(el.value);
+  const lo = isFinite(mn) ? mn : 0, hi = isFinite(mx) ? mx : 100;
+  el.style.setProperty("--p", (hi > lo ? Math.max(0, Math.min(1, (v-lo)/(hi-lo)))*100 : 0) + "%");
+}
+document.addEventListener("input", e => { if (e.target && e.target.matches && e.target.matches('.slider-row input[type="range"]')) paintRange(e.target); }, true);
 function syncSlider(k){
   const p = PARAMS[k]; if (!p) return;
   const v = STATE.values[k];
   const inp = document.querySelector(`input[data-key="${k}"]`);
   if (!inp) return;
   inp.value = p.log ? Math.log10(Math.max(v, Math.pow(10,p.min))) : v;
+  paintRange(inp);
   const val = document.querySelector(`[data-val="${k}"]`);
   if (val) val.textContent = p.fmt(v);
 }
